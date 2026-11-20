@@ -24,6 +24,27 @@ python3.11 -m venv .venv
 
 CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。程序不访问从站的 `1005h/1006h`。本阶段不发送位置目标、轮廓参数、Bit 4 触发或 Heartbeat。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
 
+## 离线机械坐标转换
+
+`MechanicalConverter` 只依赖 Python 标准库。目标位置用 mm 或 deg，原始位置用有符号 32 位 inc。七轴参数集中在 `MECHANICAL_CONFIG` 中，也可通过 `MechanicalConverter(configs)` 注入按节点 ID 索引的配置。[机械配置](canopen_pp/config.py) · [七轴行程及参考轴](vendor/readme.md)
+
+```python
+from canopen_pp.mechanical import MechanicalConverter
+
+converter = MechanicalConverter()
+converter.get_config(1).unit           # "mm"
+converter.validate_target(1, 600.0)    # 通过时返回 None
+converter.target_to_raw(1, 600.0)      # 3276800 inc
+converter.raw_to_actual(1, 3276800)    # 600.0 mm
+converter.raw_to_actual(1, 6619136)    # 1212.0 mm，保留超出目标行程的反馈
+```
+
+K 是参考轴每转的机械位移，C 是同一转对应的**通信位置增量**。目标按闭区间检查，例如节点 1 允许 0 至 1200 mm，输入 1300 mm 会抛出 `TargetSoftLimitError`。通过检查后计算 `zero_offset + direction × target × C / K`。工程数值按十进制表示计算，最终原始坐标取最近整数，恰为半个计数时向远离零的方向舍入。结果超出 I32 抛出 `RawPositionOverflowError`。
+
+反馈只检查输入的整数类型及 I32 范围，再计算 `(raw − zero_offset) × direction × K / C`。节点 6 保留完整圈数，节点 7 的 mm 表示丝杠螺母直线位移。软件目标限位用于校验输入，现场安全保护仍依靠驱动器限位、机械限位开关及急停。
+
+`zero_offset` 是机械零点对应的原始计数，`direction` 为 +1 或 −1。默认 0 和 +1 只是初始配置，实际机械零点和方向尚待现场确认。Kinco 的 `0x6063` 和 RobStride 的 `0x6064` 已按 I32 解码。项目采用的 C 分别为每电机轴转 65536 inc、每输出法兰转 16384 inc。各实轴的目标及反馈计数与实际位移是否匹配仍待实机验证。
+
 ## 每轴的五组 PDO
 
 所有 PDO 使用经典 CAN、标准标识符、小端布局和传输类型 1。表中 `n` 是节点号。[各字段字节偏移](vendor/readme.md)
