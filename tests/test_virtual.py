@@ -44,7 +44,11 @@ class SimDrive:
         if self.node.nmt.state != "OPERATIONAL":
             return
         if self.pending is not None and self.mapped(self.slots[2]):
-            cw, mode = struct.unpack("<Hb", self.pending)
+            if self.n >= 4:
+                cw, mode, torque = struct.unpack("<Hbh", self.pending)
+                self.node.set_data(0x6071, 0, struct.pack("<h", torque))
+            else:
+                cw, mode = struct.unpack("<Hb", self.pending)
             self.pending = None
             self.frames.append((cw, mode, stamp))
             if cw not in self.ignore:
@@ -90,9 +94,18 @@ def system(monkeypatch):
 
 def test_full_wire_sequence(system):
     c, sims, trace, _ = system
+    # Start from the previously deployed two-entry RPDO3.
+    for s in sims.values():
+        s.node.set_data(0x1402, 2, bytes([1]))
+        s.node.set_data(0x1402, 1, struct.pack("<I", 0x400+s.n))
+        s.node.set_data(0x1602, 0, bytes([2]))
+        s.node.set_data(0x1602, 1, struct.pack("<I", 0x60400010))
+        s.node.set_data(0x1602, 2, struct.pack("<I", 0x60600008))
     c.initialize()
     assert not any(s.frames for s in sims.values())
     c.enable()
+    for n in range(4, 8):
+        assert sims[n].node.get_data(0x6071, 0) == bytes.fromhex("E8 03")
     c.disable()
     c.enable()
     c.close()
@@ -105,10 +118,16 @@ def test_full_wire_sequence(system):
         if cob >= 0x600:
             index = int.from_bytes(data[1:3], "little")
             assert index not in (0x1005, 0x1006, 0x1016, 0x1017, 0x6040, 0x6060,
-                                 0x607A, 0x6081, 0x6083, 0x6084)
+                                 0x6071, 0x607A, 0x6081, 0x6083, 0x6084)
     assert all(cob < 0x600 for cob, _ in trace[cut:])
     assert all(not 0x201 <= cob <= 0x307 for cob, _ in trace)
     for i, (cob, data) in enumerate(trace):
+        if 0x401 <= cob <= 0x407:
+            assert data[:3] == bytes((data[0], 0, 1))
+            if cob <= 0x403:
+                assert len(data) == 3
+            else:
+                assert data[3:] == (bytes(2) if data[0] == 1 else bytes.fromhex("E8 03"))
         if cob == 0x401:
             assert [item[0] for item in trace[i:i+8]] == [0x400+n for n in sims]+[0x80]
     assert all([cw for cw, _, _ in s.frames] == [6, 7, 15, s.drive.disable_word]*2
@@ -161,12 +180,23 @@ def test_quickstop_disable_timeout_and_retry(system):
 def test_rejected_mapping_never_starts_nmt_or_sync(system):
     c, sims, trace, _ = system
     def reject(index, subindex, **kwargs):
-        if (index, subindex) == (0x1602, 2):
+        if (index, subindex) == (0x1602, 3):
             raise canopen.SdoAbortedError(0x06040041)
     sims[4].node.add_write_callback(reject)
     with pytest.raises(ControlError, match="06040041"):
         c.initialize()
     assert not any(cob == 0x80 or (cob == 0 and data[0] == 1) for cob, data in trace)
+
+
+def test_robstride_torque_has_one_active_rpdo(system):
+    c, sims, _, _ = system
+    node = sims[5].node
+    node.set_data(0x1403, 1, struct.pack("<I", 0x505))
+    node.set_data(0x1603, 0, bytes([1]))
+    node.set_data(0x1603, 1, struct.pack("<I", 0x60710010))
+    c.initialize()
+    assert int.from_bytes(node.get_data(0x1403, 1), "little") == 0x80000505
+    assert sims[5].mapped(sims[5].slots[2])
 
 
 def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
@@ -175,7 +205,7 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
     original = c.bus.transmit
 
     def fail_once(cob, data, **kw):
-        if cob == 0x404 and data == bytes((15, 0, 1)):
+        if cob == 0x404 and data == bytes.fromhex("0F 00 01 E8 03"):
             raise ControlError("injected CAN TX failure")
         return original(cob, data, **kw)
 
@@ -192,9 +222,9 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
 def test_final_verification_catches_lost_mapping(system):
     c, sims, trace, _ = system
     def corrupt_peer(index, subindex, data, **kwargs):
-        if index == 0x1602 and subindex == 0 and data[0] == 2:
-            sims[1].node.set_data(0x1602, 2, struct.pack("<I", 0x60400010))
+        if index == 0x1602 and subindex == 0 and data[0] == 3:
+            sims[4].node.set_data(0x1602, 3, struct.pack("<I", 0x60400010))
     sims[7].node.add_write_callback(corrupt_peer)
-    with pytest.raises(ControlError, match="Node 1 1602:02"):
+    with pytest.raises(ControlError, match="Node 4 1602:03"):
         c.initialize()
     assert not any(cob == 0x80 or (cob == 0 and data[0] == 1) for cob, data in trace)

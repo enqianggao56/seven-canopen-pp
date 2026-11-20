@@ -17,9 +17,14 @@ def verify_capture(trace, nodes):
         cob = m.arbitration_id
         assert not (0x601 <= cob <= 0x67F or 0x201 <= cob <= 0x27F or 0x301 <= cob <= 0x37F)
         if cob in [0x400+n for n in nodes]:
-            cw, mode = struct.unpack("<Hb", m.data)
+            n = cob - 0x400
+            if n >= 4:
+                cw, mode, torque = struct.unpack("<Hbh", m.data)
+                assert torque == (0 if cw == 1 else config.AXIS_CONFIG[n].pp_torque_per_mille)
+            else:
+                cw, mode = struct.unpack("<Hb", m.data)
             assert mode == 1 and cw in (0, 1, 6, 7, 15)
-            cycle.append((cob-0x400, cw, m.timestamp))
+            cycle.append((n, cw, m.timestamp))
         if cob == 0x80 and cycle:
             assert not m.data and [row[0] for row in cycle] == nodes
             gap = (m.timestamp-cycle[-1][2])*1000

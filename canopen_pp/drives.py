@@ -1,5 +1,6 @@
 """CiA 402 power-drive states and vendor-specific PDO layout / disable policy."""
 from dataclasses import dataclass
+from struct import Struct
 
 from .config import Axis
 
@@ -29,6 +30,11 @@ def state(word):
 class Drive:
     id: int
     axis: Axis
+    control_fields = ((0x6040, 6), (0x6060, 2))
+    control_struct = Struct("<Hb")
+
+    def control_data(self, word):
+        return self.control_struct.pack(word, 1)
 
 
 class Kinco(Drive):
@@ -38,11 +44,23 @@ class Kinco(Drive):
     disable_word = 0x0000  # Disable Voltage, CiA 402 transitions 7, 9, 10, 12
 
 
+@dataclass(frozen=True)
 class RobStride(Drive):
     eds = "RS06.eds"
     vendor = 0x556
     position_index = 0x6064
     disable_word = 0x0001  # RS06 / RS00 / EL05 manuals §5.3
+    control_fields = Drive.control_fields + ((0x6071, 3),)
+    control_struct = Struct("<Hbh")
+
+    def __post_init__(self):
+        limit = self.axis.pp_torque_per_mille
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ControlError(f"Node {self.id} 的 PP 力矩上限必须为 1–1000 的整数（‰）")
+
+    def control_data(self, word):
+        limit = 0 if word == self.disable_word else self.axis.pp_torque_per_mille
+        return self.control_struct.pack(word, 1, limit)
 
 
 def make_drives(axes):

@@ -1,5 +1,4 @@
 """Initialization and synchronous CiA 402 commands. No trajectory or set-point writer."""
-import struct
 from math import isfinite
 from time import monotonic, sleep
 
@@ -99,8 +98,12 @@ class Controller:
                                    f"({state(s.word)}) 或上一周期 TPDO 不完整")
 
     def frames(self, nodes, control=None):
-        return [(0x400+n, struct.pack("<Hb", self.drives[n].disable_word if control is None
-                                      else control, 1)) for n in nodes]
+        frames = []
+        for n in nodes:
+            drive = self.drives[n]
+            word = drive.disable_word if control is None else control
+            frames.append((0x400+n, drive.control_data(word)))
+        return frames
 
     def enable(self):
         if not self.initialized:

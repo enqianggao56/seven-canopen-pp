@@ -18,7 +18,7 @@ class Slot:
 
     @property
     def words(self):
-        widths = {2: 8, 4: 32, 6: 16, 7: 32}
+        widths = {2: 8, 3: 16, 4: 32, 6: 16, 7: 32}
         return tuple(index << 16 | widths[kind] for index, kind in self.fields)
 
 
@@ -27,7 +27,7 @@ def slots(drive):
     return (
         Slot(0x1400, 0x1600, 0x200+n, ((0x607a, 4), (0x6081, 7)), "<iI"),
         Slot(0x1401, 0x1601, 0x300+n, ((0x6083, 7), (0x6084, 7)), "<II"),
-        Slot(0x1402, 0x1602, 0x400+n, ((0x6040, 6), (0x6060, 2)), "<Hb"),
+        Slot(0x1402, 0x1602, 0x400+n, drive.control_fields, drive.control_struct.format),
         Slot(0x1800, 0x1a00, 0x180+n, ((0x6041, 6), (drive.position_index, 4), (0x6061, 2)), "<Hib"),
         Slot(0x1801, 0x1a01, 0x280+n, ((0x606c, 4),), "<i"),
     )
@@ -37,6 +37,7 @@ def check_unused_slots(bus, drives):
     used = {slot.cob for d in drives.values() for slot in slots(d)}
     for n, drive in drives.items():
         od = bus.nodes[n].object_dictionary
+        control_objects = {index << 8 for index, _ in drive.control_fields}
         for index in sorted(i for i in od if 0x1403 <= i < 0x1600 or 0x1802 <= i < 0x1a00):
             try:
                 cob = bus.read(n, index, 1)
@@ -56,8 +57,8 @@ def check_unused_slots(bus, drives):
             count = bus.read(n, mapping)
             for sub in range(1, count + 1):
                 word = bus.read(n, mapping, sub)
-                if word >> 8 in (0x604000, 0x606000):
-                    # Remove the second active control/mode route in Pre-operational.
+                if word >> 8 in control_objects:
+                    # Keep one active RPDO route for each RPDO3 field.
                     bus.set(n, index, cob | 0x80000000, 1)
                     break
 
