@@ -1,0 +1,73 @@
+"""Terminal entry point: python -m canopen_pp.main"""
+import sys
+
+from . import config
+from .communication import Adapter
+from .controller import Controller
+from .drives import ControlError, make_drives
+
+
+def connect(axes, settings, report=print):
+    drives = make_drives(axes)
+    bus = Adapter(drives, settings)
+    try:
+        controller = Controller(bus, drives, settings["sync_period_ms"], report)
+    except BaseException:
+        bus.close()
+        raise
+    try:
+        controller.initialize()
+    except BaseException:
+        try:
+            controller.close()
+        except ControlError as exc:
+            report(str(exc))
+        raise
+    return controller
+
+
+def main():
+    controller = None
+    result = 0
+    print("CANopen 七轴控制器 | init  enable  disable  status  exit")
+    try:
+        while True:
+            cmd = input("> ").strip().lower()
+            try:
+                if cmd == "exit":
+                    break
+                if cmd == "init":
+                    if controller is None:
+                        if set(config.AXIS_CONFIG) != set(range(1, 8)):
+                            raise ControlError("七轴终端需要完整配置 Node 1–7")
+                        controller = connect(config.AXIS_CONFIG, config.CAN_CONFIG)
+                        print(f"初始化完成，SYNC {config.CAN_CONFIG['sync_period_ms']} ms")
+                    print(controller.status())
+                elif cmd not in ("enable", "disable", "status"):
+                    if cmd:
+                        print("命令: init  enable  disable  status  exit")
+                elif controller is None:
+                    print("CAN 尚未初始化，请输入 init")
+                elif cmd == "status":
+                    print(controller.status())
+                elif cmd == "disable":
+                    controller.disable()
+                else:
+                    controller.enable()
+                    print("All 7 axes enabled successfully")
+            except ControlError as exc:
+                print(f"{cmd} 失败: {exc}", file=sys.stderr)
+    except (EOFError, KeyboardInterrupt):
+        print()
+    finally:
+        if controller:
+            try:
+                controller.close()
+            except ControlError as exc:
+                print(f"退出: {exc}", file=sys.stderr)
+                result = 1
+    return result
+
+
+if __name__ == "__main__":
+    sys.exit(main())
