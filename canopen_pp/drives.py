@@ -1,5 +1,6 @@
 """CiA 402 power-drive states and vendor-specific PDO layout / disable policy."""
 from dataclasses import dataclass
+from fractions import Fraction
 from struct import Struct
 
 from .config import Axis
@@ -42,6 +43,12 @@ class Kinco(Drive):
     vendor = 0x300
     position_index = 0x6063
     disable_word = 0x0000  # Disable Voltage, CiA 402 transitions 7, 9, 10, 12
+    # iSMD §7.3 and table 8-2: encoder resolution for the DEC formulas.
+    # This is distinct from the configurable mechanical position increment count.
+    encoder_resolution = 65536
+    pp_velocity_per_rps = Fraction(60 * 512 * encoder_resolution, 1875)
+    pp_accel_per_rps2 = Fraction(65536 * encoder_resolution, 4_000_000)
+    pp_reference_axis = "电机轴"
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,10 @@ class RobStride(Drive):
     disable_word = 0x0001  # RS06 / RS00 / EL05 manuals §5.3
     control_fields = Drive.control_fields + ((0x6071, 3),)
     control_struct = Struct("<Hbh")
+    # PP §5.6: 0.1 rpm and 0.1 rpm/s. One rev/s corresponds to 600 counts.
+    pp_velocity_per_rps = 60 * 10
+    pp_accel_per_rps2 = 60 * 10
+    pp_reference_axis = "输出法兰"  # installed PP reference is 1:1 with the output flange
 
     def __post_init__(self):
         limit = self.axis.pp_torque_per_mille
