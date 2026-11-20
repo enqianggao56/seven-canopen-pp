@@ -4,7 +4,7 @@
 
 ## 运行
 
-仓库包含运行所需的两份 EDS。文中引用的厂家手册和协议 PDF 为本地参考资料，可将相应文件放在 `vendor/` 下查阅。
+运行所需的两份 EDS、四份设备手册和 CiA 402 协议 PDF 均可在 [vendor 目录](vendor/) 中查阅。
 
 需要 Python 3.11+。现场使用 SocketCAN 的 `can0`，接口须已按 1 Mbit/s 启用。可通过 `ip -details link show can0` 查看实际波特率和链路状态。
 
