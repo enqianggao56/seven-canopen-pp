@@ -19,7 +19,7 @@ python3.11 -m venv .venv
 | `init` | 打开 CAN，将每个节点置于 Pre-operational，配置和读回全部映射，逐节点发送 NMT Start，再启动主站 SYNC。七轴同一周期的 TPDO1、TPDO2 均有效后报告成功。 |
 | `enable` | 同步 RPDO3 分三批发送控制字 `0006h`、`0007h`、`000Fh`，模式请求均为 1。节点 4–7 从第一批起随帧写入各自的 PP 力矩上限。每批均等待七轴的 TPDO1 确认，末批还要求七个模式显示均为 1。 |
 | `disable` | 同批发送厂商对应的失能控制字，等待七个新 TPDO1 均回报 Switch On Disabled。 |
-| `status` | 显示各节点的最新状态字、CiA 402 状态、6061 模式、实际位置（inc）及实际速度（606C 原始单位）。两路 TPDO 单独判定超时。标记 STALE 的状态字是最后一次有效读数。 |
+| `status` | 与 `init` 完成时相同，显示状态字、CiA 402 状态、6061 模式，并列显示机械实际位置、原始位置、机械实际速度及 606C 原始速度。机械量保留三位小数。 |
 | `exit`、EOF、Ctrl-C | 有轴通电或反馈不确定时先尝试整组失能，验证后关闭 SYNC 和 CAN。无法确认时输出 `Disable not confirmed` 及节点状态。 |
 
 CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。程序不访问从站的 `1005h/1006h`。本阶段不发送位置目标、轮廓参数、Bit 4 触发或 Heartbeat。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
@@ -37,6 +37,9 @@ converter.validate_target(1, 600.0)    # 通过时返回 None
 converter.target_to_raw(1, 600.0)      # 3276800 inc
 converter.raw_to_actual(1, 3276800)    # 600.0 mm
 converter.raw_to_actual(1, 6619136)    # 1212.0 mm，保留超出目标行程的反馈
+converter.raw_to_velocity(1, 65536)    # 0.732421875 mm/s，iSMD 手册比例
+converter.raw_to_velocity(4, 100)      # 60.0 deg/s
+converter.raw_to_velocity(7, 300)      # 1.0 mm/s，丝杠螺母直线速度
 ```
 
 K 是参考轴每转的机械位移，C 是同一转对应的**通信位置增量**。目标按闭区间检查，例如节点 1 允许 0 至 1200 mm，输入 1300 mm 会抛出 `TargetSoftLimitError`。通过检查后计算 `zero_offset + direction × target × C / K`。工程数值按十进制表示计算，最终原始坐标取最近整数，恰为半个计数时向远离零的方向舍入。结果超出 I32 抛出 `RawPositionOverflowError`。
@@ -44,6 +47,22 @@ K 是参考轴每转的机械位移，C 是同一转对应的**通信位置增�
 反馈只检查输入的整数类型及 I32 范围，再计算 `(raw − zero_offset) × direction × K / C`。节点 6 保留完整圈数，节点 7 的 mm 表示丝杠螺母直线位移。软件目标限位用于校验输入，现场安全保护仍依靠驱动器限位、机械限位开关及急停。
 
 `zero_offset` 是机械零点对应的原始计数，`direction` 为 +1 或 −1。默认 0 和 +1 只是初始配置，实际机械零点和方向尚待现场确认。Kinco 的 `0x6063` 和 RobStride 的 `0x6064` 已按 I32 解码。项目采用的 C 分别为每电机轴转 65536 inc、每输出法兰转 16384 inc。各实轴的目标及反馈计数与实际位移是否匹配仍待实机验证。
+
+### 速度反馈与终端读数
+
+下表是离线反馈示例。两列原始值保留驱动器上报的有符号整数。位置和速度共用 K、单位及方向，零点偏移只作用于位置。
+
+```text
+Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
+1     Kinco  0x4637      Operation Enabled   1     600.000 mm  3276800   0.732 mm/s    65536
+4     RS06   0x0037      Operation Enabled   1     45.000 deg  2048      60.000 deg/s  100
+7     EL05   0x0037      Operation Enabled   1     10.000 mm   81920     1.000 mm/s    300
+```
+
+- **Kinco** 使用 `velocity_unit="kinco_606c_dec"`。iSMD 手册 §7.2 对 `606Ch` 给出 `raw = rpm × 512 × 编码器分辨率 / 1875`。按项目电机轴 C = 65536 和手册分辨率 65536 换算，机械速度为 `raw × direction × K / (C × 16.384)`。配置中的 **16.384 秒**是由 `60 × 512 / 1875` 得到的等效计数时间基准，与 SYNC 和反馈刷新周期独立。对于已确认直接上报 inc/s 的设备，可单轴配置 `"inc_per_second"`（1 秒基准）。例如节点 1 的 65536 在此配置下显示 `12.000 mm/s`。[iSMD 手册 §7.2](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf) · [速度单位配置](canopen_pp/config.py)
+- **RobStride** 使用 `velocity_unit="rpm_0_1"`。三款手册 §5.4 均标注 `606Ch` 每计数为 0.1 rpm，机械速度为 `raw × 0.1 × direction × K / 60`。项目按输出法兰作为速度参考轴换算，`606Ch` 条目未单独说明参考轴，现场对应关系仍待验证。换算直接使用项目的 K。[RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf)
+
+TPDO1 超时时，`Position`、`Raw(inc)` 和模式显示 `--`，状态列标记 `TPDO1 STALE`，状态字保留最后一次有效读数。TPDO2 超时时，`Velocity` 显示 `--`，`Vel(raw)` 显示 `TPDO2 STALE`。两路独立更新。有效反馈的某个物理量转换失败时，对应列显示 `CONV ERROR`，原始整数仍可读，表后列出节点、字段及原因。
 
 ## 每轴的五组 PDO
 

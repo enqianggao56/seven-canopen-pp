@@ -5,6 +5,7 @@ from time import monotonic, sleep
 from . import config
 from .communication import SyncClock
 from .drives import ControlError, state
+from .mechanical import MechanicalConversionError, MechanicalConverter
 from .pdo import Feedback, check_unused_slots, configure_slot, slots, verify_slot
 
 DISABLED = "Switch On Disabled"
@@ -20,6 +21,8 @@ class Controller:
         if not isfinite(period) or not 0 < period < config.FEEDBACK_TIMEOUT:
             raise ControlError("SYNC 周期必须大于零并短于反馈超时")
         self.bus, self.drives, self.report = bus, drives, report
+        # Display configuration errors belong to the affected row, even during init.
+        self.mechanical = MechanicalConverter(config.MECHANICAL_CONFIG, validate_on_init=False)
         self.feedback = Feedback(bus.network, drives)
         self.bus.on_sync = self.feedback.sync
         self.clock = SyncClock(bus, period)
@@ -79,16 +82,33 @@ class Controller:
             sleep(min(.005, self.clock.period / 8))
 
     def status(self):
-        rows = ["Node  Motor  Statusword  CiA402 State           6061  Position(inc)  Velocity(raw)"]
-        for n, s in self.feedback.snapshot().items():
-            tp1 = monotonic() - s.received1 <= config.FEEDBACK_TIMEOUT
-            tp2 = monotonic() - s.received2 <= config.FEEDBACK_TIMEOUT
+        rows = [("Node", "Motor", "Statusword", "CiA402 State", "6061",
+                 "Position", "Raw(inc)", "Velocity", "Vel(raw)")]
+        errors = []
+
+        def physical(n, field, raw, convert, suffix):
+            try:
+                value = convert(n, raw)
+                unit = self.mechanical.get_config(n).unit
+                return f"{value:.3f} {unit}{suffix}"
+            except MechanicalConversionError as exc:
+                errors.append(f"Node {n} {field}: {exc}")
+                return "CONV ERROR"
+
+        samples = self.feedback.snapshot()
+        now = monotonic()
+        for n, s in samples.items():
+            tp1 = now - s.received1 <= config.FEEDBACK_TIMEOUT
+            tp2 = now - s.received2 <= config.FEEDBACK_TIMEOUT
             word = f"0x{s.word:04X}" if s.tp1 else "----"
             name = state(s.word) if tp1 else "TPDO1 STALE"
-            rows.append(f"{n:4}  {self.drives[n].axis.family:5}  {word:10}  {name:21}  "
-                        f"{str(s.mode) if tp1 else '--':4}  {str(s.pos) if tp1 else '--':13}  "
-                        f"{s.vel if tp2 else 'TPDO2 STALE'}")
-        return "\n".join(rows)
+            position = physical(n, "Position", s.pos, self.mechanical.raw_to_actual, "") if tp1 else "--"
+            velocity = physical(n, "Velocity", s.vel, self.mechanical.raw_to_velocity, "/s") if tp2 else "--"
+            rows.append((str(n), self.drives[n].axis.family, word, name, str(s.mode) if tp1 else "--",
+                         position, str(s.pos) if tp1 else "--", velocity, str(s.vel) if tp2 else "TPDO2 STALE"))
+        widths = [max(map(len, col)) for col in zip(*rows)]
+        lines = ["  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip() for row in rows]
+        return "\n".join(lines + errors)
 
     def guard(self, required):
         for n, s in self.feedback.snapshot().items():

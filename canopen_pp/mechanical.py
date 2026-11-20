@@ -1,9 +1,9 @@
-"""Single-axis position conversion between engineering units and signed 32-bit counts."""
+"""Single-axis position and feedback velocity conversion in engineering units."""
 from collections.abc import Mapping
 from fractions import Fraction
 from math import ceil, floor, isfinite
 
-from .config import MECHANICAL_CONFIG, AxisMechanicalConfig
+from .config import INC_VELOCITY_TIME_BASE_SECONDS, MECHANICAL_CONFIG, AxisMechanicalConfig
 
 INT32_MIN = -(1 << 31)
 INT32_MAX = (1 << 31) - 1
@@ -86,17 +86,23 @@ def _validate_config(node_id: int, cfg: AxisMechanicalConfig) -> None:
 
 
 class MechanicalConverter:
-    """Convert one position at a time using a validated snapshot of axis configurations."""
+    """Convert a single axis using a snapshot of its mechanical configuration."""
 
-    def __init__(self, configs: Mapping[int, AxisMechanicalConfig] | None = None) -> None:
+    def __init__(self, configs: Mapping[int, AxisMechanicalConfig] | None = None, *,
+                 validate_on_init: bool = True) -> None:
         self._configs = dict(MECHANICAL_CONFIG if configs is None else configs)
-        for node_id, cfg in self._configs.items():
-            _validate_config(node_id, cfg)
+        self._validate_on_access = not validate_on_init
+        if validate_on_init:
+            for node_id, cfg in self._configs.items():
+                _validate_config(node_id, cfg)
 
     def get_config(self, node_id: int) -> AxisMechanicalConfig:
         if not _is_integer(node_id) or node_id not in self._configs:
             raise UnknownAxisError(f"Node {_display(node_id)} 没有机械轴配置")
-        return self._configs[node_id]
+        cfg = self._configs[node_id]
+        if self._validate_on_access:
+            _validate_config(node_id, cfg)
+        return cfg
 
     def target_to_raw(self, node_id: int, target_position: float) -> int:
         """Validate a mechanical target and round the complete raw coordinate half away from zero."""
@@ -131,3 +137,28 @@ class MechanicalConverter:
             return float(actual)
         except OverflowError as exc:
             raise MechanicalConversionError(f"Node {node_id} 的实际位置超出 float 范围 ({cfg.unit})") from exc
+
+    def raw_to_velocity(self, node_id: int, raw_velocity: int) -> float:
+        """Decode signed 606Ch feedback in mm/s or deg/s at the configured reference axis."""
+        cfg = self.get_config(node_id)
+        if not _is_integer(raw_velocity) or not INT32_MIN <= raw_velocity <= INT32_MAX:
+            raise MechanicalConversionError(
+                f"Node {node_id} raw_velocity={_display(raw_velocity)} 必须为"
+                f" [{INT32_MIN}, {INT32_MAX}] 内的整数"
+            )
+        if cfg.velocity_unit == "rpm_0_1":
+            rev_per_second = Fraction(raw_velocity, 10 * 60)
+        else:
+            if (not isinstance(cfg.velocity_unit, str)
+                    or cfg.velocity_unit not in INC_VELOCITY_TIME_BASE_SECONDS):
+                raise InvalidMechanicalConfigError(
+                    f"Node {node_id} 不支持的 velocity_unit={cfg.velocity_unit!r}"
+                )
+            seconds = INC_VELOCITY_TIME_BASE_SECONDS[cfg.velocity_unit]
+            if not _is_finite_number(seconds) or seconds <= 0:
+                raise InvalidMechanicalConfigError(f"Node {node_id} 的速度时间基准必须为有限正秒数")
+            rev_per_second = Fraction(raw_velocity, cfg.increments_per_revolution) / _ratio(seconds)
+        try:
+            return float(rev_per_second * _ratio(cfg.travel_per_revolution) * cfg.direction)
+        except OverflowError as exc:
+            raise MechanicalConversionError(f"Node {node_id} 的实际速度超出 float 范围 ({cfg.unit}/s)") from exc

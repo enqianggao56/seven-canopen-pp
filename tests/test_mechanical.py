@@ -103,7 +103,8 @@ def test_single_allowed_target_and_config_snapshot():
 
 @pytest.mark.parametrize("node", [0, 8, True, 1.0, "1"])
 def test_unknown_axis(converter, node):
-    for operation in (converter.target_to_raw, converter.raw_to_actual, converter.validate_target):
+    for operation in (converter.target_to_raw, converter.raw_to_actual, converter.validate_target,
+                      converter.raw_to_velocity):
         with pytest.raises(UnknownAxisError, match="Node"):
             operation(node, 0)
     with pytest.raises(UnknownAxisError, match="Node"):
@@ -164,3 +165,56 @@ def test_round_trip_within_half_an_increment(converter, node, targets):
     for target in targets:
         actual = converter.raw_to_actual(node, converter.target_to_raw(node, target))
         assert abs(actual - target) <= tolerance + ulp(target)
+
+
+@pytest.mark.parametrize("node, raw, expected", [
+    (1, 65536, 12), (1, 32768, 6), (2, 65536, 12), (3, 65536, 9.5), (3, 32768, 4.75),
+])
+def test_explicit_inc_per_second(node, raw, expected):
+    c = customized(node, velocity_unit="inc_per_second")
+    assert c.raw_to_velocity(node, raw) == expected
+
+
+@pytest.mark.parametrize("node, raw, expected", [
+    (1, 65536, 0.732421875), (2, 32768, 0.3662109375), (3, 65536, 0.579833984375),
+    (1, 1048576, 11.71875),   # 58.59375 rpm per the iSMD §7.2 DEC formula
+    (4, 100, 60), (4, 50, 30), (5, 100, 60), (6, 200, 120), (7, 300, 1), (7, 600, 2),
+])
+def test_feedback_velocity_sign_and_direction(converter, node, raw, expected):
+    assert converter.raw_to_velocity(node, raw) == expected
+    assert converter.raw_to_velocity(node, -raw) == -expected
+    c = customized(node, zero_offset=100000, direction=-1)
+    assert c.raw_to_velocity(node, 0) == 0
+    assert c.raw_to_velocity(node, raw) == -expected
+    assert c.raw_to_velocity(node, -raw) == expected
+
+
+def test_velocity_rule_comes_from_config():
+    c = customized(1, velocity_unit="rpm_0_1", min_position=0, max_position=0)
+    assert c.raw_to_velocity(1, 100) == 2
+    c = customized(4, velocity_unit="inc_per_second", zero_offset=100000, direction=-1)
+    assert c.raw_to_velocity(4, 16384) == -360
+
+
+def test_velocity_int32_edges(converter):
+    assert converter.raw_to_velocity(1, -2147483648) == -24000
+    assert converter.raw_to_velocity(6, 2147483647) == pytest.approx(1288490188.2)
+
+
+@pytest.mark.parametrize("value", [True, None, 1.0, "123", nan, inf, -2147483649, 2147483648])
+def test_invalid_raw_velocity(converter, value):
+    with pytest.raises(MechanicalConversionError, match="Node 1.*raw_velocity"):
+        converter.raw_to_velocity(1, value)
+
+
+def test_unknown_velocity_unit_preserves_position():
+    c = customized(4, velocity_unit="unknown")
+    assert c.raw_to_actual(4, 8192) == 180
+    with pytest.raises(InvalidMechanicalConfigError, match="Node 4.*velocity_unit.*unknown"):
+        c.raw_to_velocity(4, 100)
+
+
+def test_velocity_float_overflow():
+    c = customized(4, travel_per_revolution=1e308)
+    with pytest.raises(MechanicalConversionError, match="Node 4.*float"):
+        c.raw_to_velocity(4, 2000)

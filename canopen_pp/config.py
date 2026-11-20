@@ -8,6 +8,10 @@ SDO_TIMEOUT = 0.30
 FEEDBACK_TIMEOUT = 0.60
 TRANSITION_TIMEOUT = 2.0
 
+# Equivalent seconds in each inc/time-base unit of 606Ch (independent of SYNC).
+# iSMD §7.2: DEC = RPM * 512 * encoder_counts_per_rev / 1875.
+INC_VELOCITY_TIME_BASE_SECONDS = {"kinco_606c_dec": 16.384, "inc_per_second": 1}
+
 
 @dataclass(frozen=True)
 class Axis:
@@ -40,6 +44,7 @@ class AxisMechanicalConfig:
     max_position: float
     zero_offset: int = 0
     direction: int = 1
+    velocity_unit: str | None = None  # raw 606Ch unit, optional for position-only configurations
 
     @property
     def mechanism_type(self) -> str:
@@ -48,15 +53,15 @@ class AxisMechanicalConfig:
 
 MECHANICAL_CONFIG = {
     n: AxisMechanicalConfig(n, AXIS_CONFIG[n].name, AXIS_CONFIG[n].family, reference, unit,
-                            travel, increments, low, high, zero, direction)
-    for n, reference, unit, travel, increments, low, high, zero, direction in (
-        # ID, reference axis, unit, K/rev, C/rev, min, max, zero (inc), direction
-        (1, "电机轴",   "mm",   12, 65536,    0, 1200, 0, 1),
-        (2, "电机轴",   "mm",   12, 65536,    0, 1100, 0, 1),
-        (3, "电机轴",   "mm",  9.5, 65536,    0,  700, 0, 1),
-        (4, "输出法兰", "deg", 360, 16384,  -90,   90, 0, 1),
-        (5, "输出法兰", "deg", 360, 16384,  -45,   45, 0, 1),
-        (6, "输出法兰", "deg", 360, 16384, -360,  360, 0, 1),
-        (7, "输出法兰", "mm",    2, 16384,    0,   20, 0, 1),
+                            travel, increments, low, high, zero, direction, velocity_unit)
+    for n, reference, unit, travel, increments, low, high, zero, direction, velocity_unit in (
+        # ID, reference axis, unit, K/rev, C/rev, min, max, zero (inc), direction, 606Ch unit
+        (1, "电机轴",   "mm",   12, 65536,    0, 1200, 0, 1, "kinco_606c_dec"),
+        (2, "电机轴",   "mm",   12, 65536,    0, 1100, 0, 1, "kinco_606c_dec"),
+        (3, "电机轴",   "mm",  9.5, 65536,    0,  700, 0, 1, "kinco_606c_dec"),
+        (4, "输出法兰", "deg", 360, 16384,  -90,   90, 0, 1, "rpm_0_1"),
+        (5, "输出法兰", "deg", 360, 16384,  -45,   45, 0, 1, "rpm_0_1"),
+        (6, "输出法兰", "deg", 360, 16384, -360,  360, 0, 1, "rpm_0_1"),
+        (7, "输出法兰", "mm",    2, 16384,    0,   20, 0, 1, "rpm_0_1"),
     )
 }
