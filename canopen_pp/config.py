@@ -1,7 +1,8 @@
 """Master timing, installed drives and mechanical coordinates keyed by node ID."""
 from dataclasses import dataclass
+import os
 
-PARAMETER_TEST_ONLY = True
+PARAMETER_TEST_ONLY = os.environ.get("CANOPEN_PP_MOTION") != "1"
 CAN_CONFIG = dict(interface="socketcan", channel="can0", bitrate=1_000_000,
                   sync_period_ms=100)
 INITIAL_SDO_TIMEOUT = 1.0
@@ -18,17 +19,16 @@ INC_VELOCITY_TIME_BASE_SECONDS = {"kinco_606c_dec": 16.384, "inc_per_second": 1}
 class Axis:
     family: str
     name: str
-    pp_torque_per_mille: int | None = None  # RobStride 6071h, 1000 = 100%
 
 
 AXIS_CONFIG = {
     1: Axis("Kinco", "横移"),
     2: Axis("Kinco", "上下"),
     3: Axis("Kinco", "伸缩"),
-    4: Axis("RS06", "小臂上下旋转", pp_torque_per_mille=1000),
-    5: Axis("RS00", "小臂左右旋转", pp_torque_per_mille=1000),
-    6: Axis("EL05", "绕轴旋转", pp_torque_per_mille=1000),
-    7: Axis("EL05", "夹爪", pp_torque_per_mille=1000),
+    4: Axis("RS06", "小臂上下旋转"),
+    5: Axis("RS00", "小臂左右旋转"),
+    6: Axis("EL05", "绕轴旋转"),
+    7: Axis("EL05", "夹爪"),
 }
 
 
@@ -49,6 +49,20 @@ PP_DESIGN_LIMITS = {
     6: PPDesignLimits(720, 720, 720),
     7: PPDesignLimits(14, 14, 14),
 }
+
+
+# Allowed position error in the mechanical axis unit (mm or deg).
+PP_POSITION_TOLERANCES = {
+    1: .02, 2: .02, 3: .02,
+    4: .05, 5: .05, 6: .05,
+    7: .005,
+}
+
+# Statusword bits required in addition to actual position feedback.
+PP_ACK_NODES = frozenset({1, 2, 3})
+PP_TARGET_REACHED_NODES = frozenset({1, 2, 3})
+PP_ACK_TIMEOUT = 2.0
+PP_SETTLING_MARGIN = 3.0
 
 
 @dataclass(frozen=True)

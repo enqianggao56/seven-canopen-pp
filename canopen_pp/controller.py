@@ -1,14 +1,17 @@
-"""Initialization and synchronous CiA 402 commands. No trajectory or set-point writer."""
+"""Initialization and synchronous CiA 402 commands. Seven-axis absolute Profile Position motion."""
 from math import isfinite
+from threading import Lock
 from time import monotonic, sleep
 
 from . import config
 from .communication import SyncClock
 from .drives import ControlError, state
 from .mechanical import MechanicalConversionError, MechanicalConverter
+from .motion import PPMotion
 from .move_test import batch_report, prepare
 from .pdo import Feedback, check_unused_slots, configure_slot, slots, verify_slot
 from .pp import PPEncoder
+from .pp_config import load_targets
 
 DISABLED = "Switch On Disabled"
 READY = "Ready to Switch On"
@@ -30,6 +33,10 @@ class Controller:
         self.bus.on_sync = self.feedback.sync
         self.clock = SyncClock(bus, period)
         self.initialized = False
+        self.pp_lock = Lock()
+        self.pp_enabled = False
+        self.completed_positions = None
+        self.pp_inhibited = False
         self.needs_disable = False
 
     def initialize(self):
@@ -129,22 +136,30 @@ class Controller:
                 raise ControlError(f"Node {n} 阶段预检失败，6041=0x{s.word:04X} "
                                    f"({state(s.word)}) 或上一周期 TPDO 不完整")
 
-    def frames(self, nodes, control=None):
+    def frames(self, nodes, control=None, torques=None):
         frames = []
         for n in nodes:
             drive = self.drives[n]
             word = drive.disable_word if control is None else control
-            frames.append((0x400+n, drive.control_data(word)))
+            frames.append((0x400+n, drive.control_data(word, torques[n] if torques else None)))
         return frames
 
-    def enable(self):
+    def enable(self, targets=None):
         if self.parameter_test_only:
             raise ControlError("PARAMETER TEST ONLY 模式禁止 enable")
         if not self.initialized:
             raise ControlError("请先 init")
+        if self.pp_inhibited:
+            raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
+        try:
+            targets = load_targets() if targets is None else targets
+            targets.encode(PPEncoder(self.mechanical))
+        except (OSError, ValueError) as exc:
+            raise ControlError(f"PP 配置错误: {exc}") from exc
+        torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
         try:
             samples = self.wait_feedback(self.drives, description="使能前反馈", both=True)
-            if all(state(s.word) == ENABLED and s.mode == 1 for s in samples.values()):
+            if self.pp_enabled and all(state(s.word) == ENABLED and s.mode == 1 for s in samples.values()):
                 return
             # Normalize mixed powered states, including Quick Stop Active. Never reset faults.
             for n, s in samples.items():
@@ -156,17 +171,52 @@ class Controller:
                 self.needs_disable = True
             previous = DISABLED
             for cw, target in ((6, READY), (7, SWITCHED), (15, ENABLED)):
-                stamp = self.clock.batch(self.frames(self.drives, cw),
+                stamp = self.clock.batch(self.frames(self.drives, cw, torques),
                                          guard=lambda: self.guard(previous))
                 samples = self.wait_feedback(self.drives, since=stamp, target=target, pp=(cw == 15),
                                              both=True, enabling=True, description=f"0x{cw:04X} → {target}")
                 words = " ".join(f"N{n}=0x{samples[n].word:04X}" for n in self.drives)
                 self.report(f"0x{cw:04X} → {target}  {words}")
                 previous = target
+            self.pp_enabled = True
         except BaseException:
             self.report("使能中止，回退前的 TPDO 反馈\n" + self.status())
             self.try_disable()
             raise
+
+    def pp_move(self, targets):
+        if self.parameter_test_only:
+            raise ControlError("PARAMETER TEST ONLY 模式禁止 pp-move")
+        if not self.initialized:
+            raise ControlError("请先 init")
+        if self.pp_inhibited:
+            raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
+        if not self.pp_enabled:
+            raise ControlError("请先 enable")
+        if not self.pp_lock.acquire(blocking=False):
+            raise ControlError("上一批 PP 运动尚未完成")
+        try:
+            try:
+                axes = prepare(targets, self.drives, PPEncoder(self.mechanical), control=0x000F)
+            except ValueError as exc:
+                raise ControlError(f"PP 配置错误: {exc}") from exc
+            motion = PPMotion(self, axes)
+            torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
+            trigger = self.frames(self.drives, 0x001F, torques)
+            clear = [a.frames[2] for a in axes]
+            try:
+                already_in_window = motion.run(trigger, clear)
+            except BaseException:
+                self.abort_motion()
+                raise
+            self.completed_positions = {a.target.command.node_id: a.params.target_position for a in axes}
+            if already_in_window:
+                self.report("七轴在触发前已位于本次到位窗口内，本次定位无需位移。")
+            self.report("Seven Axis PP Motion Completed\n\n" + "\n".join(
+                f"Node {n}: Completed" for n in self.drives)
+                + "\n\nAll axes remain Operation Enabled.\nReady for next pp-move.")
+        finally:
+            self.pp_lock.release()
 
     def move_test(self, targets):
         if not self.initialized:
@@ -190,7 +240,21 @@ class Controller:
         self.needs_disable = False
         self.report(batch_report(axes, echoes, samples, None))
 
+    def abort_motion(self):
+        self.pp_inhibited = True
+        self.report("PP 异常，已锁定后续运动，执行整组失能。")
+        try:
+            self._disable_group()
+        except ControlError as exc:
+            self.report(f"{exc}\n{self.status()}\n无法确认整组失能，请使用现场安全回路并确保垂直负载受支撑。")
+
     def disable(self):
+        self._disable_group()
+        self.pp_inhibited = False
+
+    def _disable_group(self):
+        self.pp_enabled = False
+        self.completed_positions = None
         if self.clock.thread.ident is None:
             raise ControlError("Disable not confirmed，SYNC 尚未运行")
         self.needs_disable = True

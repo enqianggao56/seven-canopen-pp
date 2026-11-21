@@ -20,6 +20,9 @@ class SimDrive:
         self.node = net.create_node(self.n, str(VENDOR / drive.eds))
         self.word, self.mode = 0x0040, 0
         self.pending = None
+        self.pending_position = self.target_position = None
+        self.pos, self.vel = -3200, -10
+        self.follow_target = True
         self.ignore = set()
         self.mode_ok = self.send_velocity = True
         self.node.set_data(0x6041, 0, struct.pack("<H", self.word))
@@ -27,8 +30,12 @@ class SimDrive:
         for slot in self.slots:
             self.node.set_data(slot.com, 2, bytes([255]))
         self.frames = []
+        net.subscribe(0x200+self.n, self.queue_position)
         net.subscribe(0x400+self.n, self.queue)
         net.subscribe(0x80, self.tick)
+
+    def queue_position(self, cob, data, stamp):
+        self.pending_position, _ = struct.unpack("<iI", data)
 
     def queue(self, cob, data, stamp):
         self.pending = bytes(data)
@@ -43,6 +50,9 @@ class SimDrive:
     def tick(self, cob, data, stamp):
         if self.node.nmt.state != "OPERATIONAL":
             return
+        if self.pending_position is not None and self.mapped(self.slots[0]):
+            self.target_position = self.pending_position
+            self.pending_position = None
         if self.pending is not None and self.mapped(self.slots[2]):
             if self.n >= 4:
                 cw, mode, torque = struct.unpack("<Hbh", self.pending)
@@ -61,10 +71,17 @@ class SimDrive:
                 elif (cw, self.word) == (15, 0x33):
                     self.word = 0x37
                     self.mode = mode if self.mode_ok else 0
+                elif cw == 31 and self.target_position is not None:
+                    self.word |= 0x1000
+                    if self.follow_target:
+                        self.pos = self.target_position
+                        self.word |= 0x0400
+                elif cw == 15:
+                    self.word &= ~0x1000
         if self.mapped(self.slots[3]):
-            self.node.network.send_message(0x180+self.n, struct.pack("<Hib", self.word, -3200, self.mode))
+            self.node.network.send_message(0x180+self.n, struct.pack("<Hib", self.word, self.pos, self.mode))
         if self.send_velocity and self.mapped(self.slots[4]):
-            self.node.network.send_message(0x280+self.n, struct.pack("<i", -10))
+            self.node.network.send_message(0x280+self.n, struct.pack("<i", self.vel))
 
 
 @pytest.fixture(autouse=True)
@@ -111,7 +128,7 @@ def test_full_wire_sequence(system):
     assert not any(s.frames for s in sims.values())
     c.enable()
     for n in range(4, 8):
-        assert sims[n].node.get_data(0x6071, 0) == bytes.fromhex("E8 03")
+        assert sims[n].node.get_data(0x6071, 0) == bytes.fromhex("64 00")
     c.disable()
     c.enable()
     c.close()
@@ -133,7 +150,7 @@ def test_full_wire_sequence(system):
             if cob <= 0x403:
                 assert len(data) == 3
             else:
-                assert data[3:] == (bytes(2) if data[0] == 1 else bytes.fromhex("E8 03"))
+                assert data[3:] == (bytes(2) if data[0] == 1 else bytes.fromhex("64 00"))
         if cob == 0x401:
             assert [item[0] for item in trace[i:i+8]] == [0x400+n for n in sims]+[0x80]
     assert all([cw for cw, _, _ in s.frames] == [6, 7, 15, s.drive.disable_word]*2
@@ -211,7 +228,7 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
     original = c.bus.transmit
 
     def fail_once(cob, data, **kw):
-        if cob == 0x404 and data == bytes.fromhex("0F 00 01 E8 03"):
+        if cob == 0x404 and data == bytes.fromhex("0F 00 01 64 00"):
             raise ControlError("injected CAN TX failure")
         return original(cob, data, **kw)
 

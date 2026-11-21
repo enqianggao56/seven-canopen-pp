@@ -33,7 +33,7 @@ class Drive:
     control_fields = ((0x6040, 6), (0x6060, 2))
     control_struct = Struct("<Hb")
 
-    def control_data(self, word):
+    def control_data(self, word, torque_per_mille=None):
         return self.control_struct.pack(word, 1)
 
 
@@ -53,14 +53,12 @@ class RobStride(Drive):
     control_fields = Drive.control_fields + ((0x6071, 3),)
     control_struct = Struct("<Hbh")
 
-    def __post_init__(self):
-        limit = self.axis.pp_torque_per_mille
-        if type(limit) is not int or not 1 <= limit <= 1000:
-            raise ControlError(f"Node {self.id} 的 PP 力矩上限必须为 1–1000 的整数（‰）")
-
-    def control_data(self, word):
-        limit = 0 if word == self.disable_word else self.axis.pp_torque_per_mille
-        return self.control_struct.pack(word, 1, limit)
+    def control_data(self, word, torque_per_mille=None):
+        if word == self.disable_word:
+            torque_per_mille = 0
+        elif type(torque_per_mille) is not int or not 1 <= torque_per_mille <= 1000:
+            raise ControlError(f"Node {self.id} 需要有效的 JSON 力矩上限（1–1000‰）")
+        return self.control_struct.pack(word, 1, torque_per_mille)
 
 
 def make_drives(axes):

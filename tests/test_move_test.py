@@ -4,20 +4,27 @@ from time import sleep
 
 import pytest
 
+from canopen_pp import config
 from canopen_pp.drives import ControlError
-from canopen_pp.pp_config import load_targets
+from canopen_pp.pp import PPCommand
+from canopen_pp.pp_config import AxisTarget, PPTargets, load_targets
 from test_virtual import system  # reuse the seven LocalNodes and the independent virtual listener
+
+
+@pytest.fixture(autouse=True)
+def parameter_test_mode(monkeypatch):
+    monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", True)
 
 
 def test_batch_on_virtual_bus(system, monkeypatch):
     c, sims, trace, log = system
     c.initialize()
-    targets = load_targets()
-    # Use a negative target and different acceleration/deceleration on one rotary axis.
-    axes = list(targets.axes)
-    axes[3] = replace(axes[3], command=replace(axes[3].command, target_position=-45,
-                                               velocity=60, acceleration=12, deceleration=3))
-    targets = replace(targets, axes=tuple(axes))
+    # Fixed inputs for the wire values below, independent of the operator's JSON.
+    profiles = ((100, 5, 10, 10), (100, 5, 10, 10), (50, 5, 10, 10), (-45, 60, 12, 3),
+                (5, 5, 10, 10), (5, 5, 10, 10), (1, 1, 2, 2))
+    targets = PPTargets("wire test", tuple(
+        AxisTarget(PPCommand(n, *profile), 100 if n >= 4 else None)
+        for n, profile in enumerate(profiles, 1)))
     expected = [(546133, 447392, 894, 894), (546133, 447392, 894, 894),
                 (344926, 565127, 1130, 1130), (-2048, 100, 20, 5), (228, 8, 16, 16),
                 (228, 8, 16, 16), (8192, 300, 600, 600)]

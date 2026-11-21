@@ -3,7 +3,6 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from canopen_pp import main
 from canopen_pp.pp_config import CONFIG_PATH, load_targets
 
 
@@ -50,11 +49,8 @@ def test_invalid_config(tmp_path, location, key, value):
 @pytest.mark.parametrize("content", ["{", "null", "[]",
     CONFIG_PATH.read_text().replace('"1":', '"1": {}, "1":', 1),
     CONFIG_PATH.read_text().replace('"position":', '"position": 0, "position":', 1)])
-def test_bad_input_exits_before_prompt_or_can(tmp_path, monkeypatch, capsys, content):
+def test_malformed_config(tmp_path, content):
     path = tmp_path / "bad.json"
     path.write_text(content)
-    monkeypatch.setattr(main, "CONFIG_PATH", path)
-    monkeypatch.setattr(main, "connect", lambda *a: pytest.fail("opened CAN"))
-    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("prompted"))
-    assert main.main() == 1
-    assert "配置加载失败" in capsys.readouterr().err
+    with pytest.raises(ValueError):
+        load_targets(path)

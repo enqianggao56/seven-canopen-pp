@@ -1,5 +1,13 @@
 """Terminal command gating before initialization."""
+import pytest
+
+from canopen_pp import config
 from canopen_pp.main import main
+
+
+@pytest.fixture(autouse=True)
+def parameter_test_mode(monkeypatch):
+    monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", True)
 
 
 def test_terminal_before_init(monkeypatch, capsys):
@@ -13,24 +21,31 @@ def test_terminal_before_init(monkeypatch, capsys):
     assert "All 7 axes enabled successfully" not in output
 
 
-def test_terminal_uses_startup_snapshot_after_file_changes(monkeypatch, tmp_path, capsys):
+def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, capsys):
+    import json
     from unittest.mock import Mock
     from canopen_pp import main as terminal
     from canopen_pp.pp_config import CONFIG_PATH
 
     path = tmp_path / "targets.json"
-    path.write_bytes(CONFIG_PATH.read_bytes())
+    repaired = json.loads(CONFIG_PATH.read_text())
+    repaired["axes"]["1"]["position"] = 100
+    path.write_text("{}")
     controller = Mock()
     connect = Mock(return_value=controller)
     monkeypatch.setattr(terminal, "CONFIG_PATH", path)
     monkeypatch.setattr(terminal, "connect", connect)
-    commands = iter(["init", "enable", "move-test", "exit"])
 
-    def command(_):
-        path.write_text("{}")
-        return next(commands)
+    def commands():
+        yield "init"
+        yield "enable"
+        yield "move-test"
+        path.write_text(json.dumps(repaired))
+        yield "move-test"
+        yield "exit"
 
-    monkeypatch.setattr("builtins.input", command)
+    script = commands()
+    monkeypatch.setattr("builtins.input", lambda _: next(script))
     assert main() == 0
     assert "禁止 enable" in capsys.readouterr().err
     connect.assert_called_once()

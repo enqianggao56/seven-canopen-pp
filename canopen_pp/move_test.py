@@ -1,4 +1,4 @@
-"""Prepare and report one disabled parameter batch using the installed PDO layouts."""
+"""Pack PP parameters using the installed PDO layouts and report disabled test batches."""
 from dataclasses import dataclass
 import struct
 
@@ -16,19 +16,20 @@ class PreparedAxis:
     frames: tuple[tuple[int, bytes], ...]
 
 
-def prepare(targets, drives, encoder):
+def prepare(targets, drives, encoder, control=None):
     if set(drives) != set(NODES):
-        raise ControlError("move-test 需要全部七个驱动器")
+        raise ControlError("PP 批次需要全部七个驱动器")
     encoded = targets.encode(encoder)
     axes = []
     for target, p in zip(targets.axes, encoded, strict=True):
         n = target.command.node_id
         drive = drives[n]
         rp1, rp2, rp3 = slots(drive)[:3]
+        word = drive.disable_word if control is None else control
         frames = (
             (rp1.cob, struct.pack(rp1.fmt, p.target_position, p.profile_velocity)),
             (rp2.cob, struct.pack(rp2.fmt, p.profile_acceleration, p.profile_deceleration)),
-            (rp3.cob, drive.control_data(drive.disable_word)),
+            (rp3.cob, drive.control_data(word, target.torque_per_mille)),
         )
         axes.append(PreparedAxis(target, encoder.converter.get_config(n).unit, p, frames))
     return axes

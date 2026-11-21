@@ -1,5 +1,4 @@
 import struct
-from dataclasses import replace
 
 import pytest
 
@@ -32,15 +31,13 @@ def test_layout_and_flags():
 
 
 def test_configured_torque_per_axis():
-    axes = dict(config.AXIS_CONFIG)
-    axes[5] = replace(axes[5], pp_torque_per_mille=250)
-    drives = make_drives(axes)
-    assert drives[5].control_data(6) == bytes.fromhex("06 00 01 FA 00")
-    assert drives[4].control_data(6) == bytes.fromhex("06 00 01 E8 03")
+    drives = make_drives(config.AXIS_CONFIG)
+    assert drives[5].control_data(6, 250) == bytes.fromhex("06 00 01 FA 00")
+    assert drives[4].control_data(6, 100) == bytes.fromhex("06 00 01 64 00")
     assert drives[5].control_data(1) == bytes.fromhex("01 00 01 00 00")
     for value in (None, -1, 0, 1001, 20.5, True):
         with pytest.raises(ControlError, match="Node 5"):
-            make_drives({5: replace(axes[5], pp_torque_per_mille=value)})
+            drives[5].control_data(6, value)
 
 
 def test_invalid_lengths_and_cycle_barrier():

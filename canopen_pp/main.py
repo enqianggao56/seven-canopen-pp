@@ -33,14 +33,9 @@ def main():
     print("=" * 40 + "\nSeven Axis CANopen PP Controller\n" + "=" * 40)
     mode = "PARAMETER TEST ONLY" if config.PARAMETER_TEST_ONLY else "CiA 402"
     print(f"\nMode: {mode}\nConfiguration: config/pp_targets.json")
-    try:
-        targets = load_targets(CONFIG_PATH)
-    except (OSError, ValueError) as exc:
-        print(f"配置加载失败: {exc}", file=sys.stderr)
-        return 1
-    commands = ["init", "move-test", "status", "disable", "exit"]
     if not config.PARAMETER_TEST_ONLY:
-        commands.append("enable")
+        print("运动异常或退出时会请求整组失能。请确认节点 2 垂直负载的抱闸与独立防坠保护。")
+    commands = ["init", "enable", "pp-move", "move-test", "status", "disable", "exit"]
     print("\nCommands:\n  " + "\n  ".join(commands))
     try:
         while True:
@@ -55,8 +50,8 @@ def main():
                         controller = connect(config.AXIS_CONFIG, config.CAN_CONFIG)
                         print(f"初始化完成，SYNC {config.CAN_CONFIG['sync_period_ms']} ms")
                     print(controller.status())
-                elif cmd == "enable" and config.PARAMETER_TEST_ONLY:
-                    raise ControlError("PARAMETER TEST ONLY 模式禁止 enable")
+                elif cmd in ("enable", "pp-move") and config.PARAMETER_TEST_ONLY:
+                    raise ControlError(f"PARAMETER TEST ONLY 模式禁止 {cmd}")
                 elif cmd not in commands:
                     if cmd:
                         print("命令: " + "  ".join(commands))
@@ -66,11 +61,19 @@ def main():
                     print(controller.status())
                 elif cmd == "disable":
                     controller.disable()
-                elif cmd == "move-test":
-                    controller.move_test(targets)
-                elif cmd == "enable":
-                    controller.enable()
-                    print("All 7 axes enabled successfully")
+                elif cmd in ("enable", "pp-move", "move-test"):
+                    try:
+                        targets = load_targets(CONFIG_PATH)
+                    except (OSError, ValueError, RecursionError) as exc:
+                        raise ControlError(f"配置加载失败: {exc}") from exc
+                    if cmd == "pp-move":
+                        print(f"已读取 {CONFIG_PATH}，使用本次七轴定位快照")
+                        controller.pp_move(targets)
+                    elif cmd == "move-test":
+                        controller.move_test(targets)
+                    else:
+                        controller.enable(targets)
+                        print("All 7 axes enabled successfully")
             except ControlError as exc:
                 print(f"{cmd} 失败: {exc}", file=sys.stderr)
     except (EOFError, KeyboardInterrupt):

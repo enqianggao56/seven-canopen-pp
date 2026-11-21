@@ -7,9 +7,11 @@ import pytest
 
 from canopen_pp import config
 from canopen_pp.main import connect
+from canopen_pp.pp_config import load_targets
 
 
-def verify_capture(trace, nodes):
+def verify_capture(trace, nodes, targets):
+    torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
     start = next(i for i, m in enumerate(trace) if m.arbitration_id == 0 and m.data[0] == 1)
     assert not any(m.arbitration_id == 0x80 for m in trace[:start])
     cycle, batches = [], []
@@ -20,7 +22,7 @@ def verify_capture(trace, nodes):
             n = cob - 0x400
             if n >= 4:
                 cw, mode, torque = struct.unpack("<Hbh", m.data)
-                assert torque == (0 if cw == 1 else config.AXIS_CONFIG[n].pp_torque_per_mille)
+                assert torque == (0 if cw == 1 else torques[n])
             else:
                 cw, mode = struct.unpack("<Hb", m.data)
             assert mode == 1 and cw in (0, 1, 6, 7, 15)
@@ -43,6 +45,7 @@ def test_hardware(nodes, selection):
     if os.getenv("CANOPEN_HARDWARE_TEST") != selection:
         pytest.skip(f"requires CANOPEN_HARDWARE_TEST={selection}")
     settings = {k: v for k, v in config.CAN_CONFIG.items() if k != "sync_period_ms"}
+    targets = load_targets()
     with can.Bus(**settings) as monitor:
         trace = []
         listener = can.Notifier(monitor, [trace.append], timeout=.02)
@@ -50,7 +53,7 @@ def test_hardware(nodes, selection):
             c = connect({n: config.AXIS_CONFIG[n] for n in nodes}, config.CAN_CONFIG)
             try:
                 print("初始 TPDO\n" + c.status(), flush=True)
-                c.enable()
+                c.enable(targets)
                 print("使能 TPDO\n" + c.status(), flush=True)
                 c.disable()
                 print("失能 TPDO\n" + c.status(), flush=True)
@@ -58,4 +61,4 @@ def test_hardware(nodes, selection):
                 c.close()
         finally:
             listener.stop()
-    verify_capture(trace, nodes)
+    verify_capture(trace, nodes, targets)

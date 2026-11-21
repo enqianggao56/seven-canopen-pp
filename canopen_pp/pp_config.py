@@ -76,5 +76,5 @@ def load_targets(path: Path = CONFIG_PATH) -> PPTargets:
         cmd = PPCommand(n, row["position"], row["velocity"], row["acceleration"], row["deceleration"])
         axes.append(AxisTarget(cmd, row.get("torque_per_mille")))
     targets = PPTargets(doc["name"], tuple(axes))
-    targets.encode(PPEncoder())  # Reject unrepresentable values before opening CAN.
+    targets.encode(PPEncoder())  # Reject unrepresentable values before returning this snapshot.
     return targets
