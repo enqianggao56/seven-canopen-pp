@@ -5,6 +5,7 @@ from . import config
 from .communication import Adapter
 from .controller import Controller
 from .drives import ControlError, make_drives
+from .pp_config import CONFIG_PATH, load_targets
 
 
 def connect(axes, settings, report=print):
@@ -29,7 +30,18 @@ def connect(axes, settings, report=print):
 def main():
     controller = None
     result = 0
-    print("CANopen 七轴控制器 | init  enable  disable  status  exit")
+    print("=" * 40 + "\nSeven Axis CANopen PP Controller\n" + "=" * 40)
+    mode = "PARAMETER TEST ONLY" if config.PARAMETER_TEST_ONLY else "CiA 402"
+    print(f"\nMode: {mode}\nConfiguration: config/pp_targets.json")
+    try:
+        targets = load_targets(CONFIG_PATH)
+    except (OSError, ValueError) as exc:
+        print(f"配置加载失败: {exc}", file=sys.stderr)
+        return 1
+    commands = ["init", "move-test", "status", "disable", "exit"]
+    if not config.PARAMETER_TEST_ONLY:
+        commands.append("enable")
+    print("\nCommands:\n  " + "\n  ".join(commands))
     try:
         while True:
             cmd = input("> ").strip().lower()
@@ -43,16 +55,20 @@ def main():
                         controller = connect(config.AXIS_CONFIG, config.CAN_CONFIG)
                         print(f"初始化完成，SYNC {config.CAN_CONFIG['sync_period_ms']} ms")
                     print(controller.status())
-                elif cmd not in ("enable", "disable", "status"):
+                elif cmd == "enable" and config.PARAMETER_TEST_ONLY:
+                    raise ControlError("PARAMETER TEST ONLY 模式禁止 enable")
+                elif cmd not in commands:
                     if cmd:
-                        print("命令: init  enable  disable  status  exit")
+                        print("命令: " + "  ".join(commands))
                 elif controller is None:
                     print("CAN 尚未初始化，请输入 init")
                 elif cmd == "status":
                     print(controller.status())
                 elif cmd == "disable":
                     controller.disable()
-                else:
+                elif cmd == "move-test":
+                    controller.move_test(targets)
+                elif cmd == "enable":
                     controller.enable()
                     print("All 7 axes enabled successfully")
             except ControlError as exc:

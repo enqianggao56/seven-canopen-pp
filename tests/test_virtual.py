@@ -67,6 +67,12 @@ class SimDrive:
             self.node.network.send_message(0x280+self.n, struct.pack("<i", -10))
 
 
+@pytest.fixture(autouse=True)
+def regular_mode(monkeypatch):
+    # This module tests the original CiA 402 enable sequence on virtual CAN.
+    monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", False)
+
+
 @pytest.fixture
 def system(monkeypatch):
     monkeypatch.setattr(config, "TRANSITION_TIMEOUT", .45)

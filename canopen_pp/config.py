@@ -1,6 +1,7 @@
 """Master timing, installed drives and mechanical coordinates keyed by node ID."""
 from dataclasses import dataclass
 
+PARAMETER_TEST_ONLY = True
 CAN_CONFIG = dict(interface="socketcan", channel="can0", bitrate=1_000_000,
                   sync_period_ms=100)
 INITIAL_SDO_TIMEOUT = 1.0

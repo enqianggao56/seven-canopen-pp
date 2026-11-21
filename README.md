@@ -1,6 +1,6 @@
-# 七轴 CANopen 同步 PDO 使能终端
+# 七轴 CANopen PP 参数测试终端
 
-通过终端初始化七个驱动器、切换 CiA 402 状态并查看真实反馈。启动终端后由操作者输入 `init`，驱动器只在收到 `enable` 命令后进入使能流程。
+默认运行模式为 **PARAMETER TEST ONLY**。终端在七轴失能时发送一次绝对位置和轮廓参数，记录各帧发送回显，并用批次 SYNC 后的七轴 TPDO 确认状态。
 
 ## 运行
 
@@ -16,13 +16,69 @@ python3.11 -m venv .venv
 
 | 命令 | 行为 |
 |---|---|
-| `init` | 打开 CAN，将每个节点置于 Pre-operational，配置和读回全部映射，逐节点发送 NMT Start，再启动主站 SYNC。七轴同一周期的 TPDO1、TPDO2 均有效后报告成功。 |
-| `enable` | 同步 RPDO3 分三批发送控制字 `0006h`、`0007h`、`000Fh`，模式请求均为 1。节点 4–7 从第一批起随帧写入各自的 PP 力矩上限。每批均等待七轴的 TPDO1 确认，末批还要求七个模式显示均为 1。 |
+| `init` | 打开 CAN，将每个节点置于 Pre-operational，配置和读回全部映射，逐节点发送 NMT Start，再启动主站 SYNC。七轴同一周期的 TPDO1、TPDO2 均有效且七轴均为 Switch On Disabled 后报告成功。 |
+| `move-test` | 按启动时的快照编码七轴，提交一批 21 帧 RPDO 并确认批次 SYNC 和失能反馈。每次命令只提交一批。 |
+| `enable` | 参数测试模式下拒绝执行。 |
 | `disable` | 同批发送厂商对应的失能控制字，等待七个新 TPDO1 均回报 Switch On Disabled。 |
 | `status` | 与 `init` 完成时相同，显示状态字、CiA 402 状态、6061 模式，并列显示机械实际位置、原始位置、机械实际速度及 606C 原始速度。机械量保留三位小数。 |
 | `exit`、EOF、Ctrl-C | 有轴通电或反馈不确定时先尝试整组失能，验证后关闭 SYNC 和 CAN。无法确认时输出 `Disable not confirmed` 及节点状态。 |
 
-CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。程序不访问从站的 `1005h/1006h`。本阶段不发送位置目标、轮廓参数、Bit 4 触发或 Heartbeat。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
+CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。程序不访问从站的 `1005h/1006h`。本阶段所有 RPDO3 的 Bit 4 均为 0。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
+
+## 七轴绝对位置配置
+
+启动时读取仓库根目录的 `config/pp_targets.json`。顶层需要整数 `version = 1`、非空字符串 `name`、`position_mode = "absolute"` 及对象 `axes`。节点键必须恰好为 `"1"` 至 `"7"`，文件中的排列顺序任意。随附的数值仅供失能通信验证，实际运动的机械安全目标需另行确认。[完整配置](config/pp_targets.json)
+
+| 节点 | 必填字段 | 工程单位 |
+|---|---|---|
+| 1–3 | position、velocity、acceleration、deceleration | mm、mm/s、mm/s²、mm/s² |
+| 4–6 | 上述四项及 torque_per_mille | deg、deg/s、deg/s²、deg/s²、‰ |
+| 7 | 上述五项 | mm、mm/s、mm/s²、mm/s²、‰ |
+
+加载器检查未知字段、缺项、重复键、类型、有限数值和机械设计限值。三个轮廓幅值必须为正且可编码，力矩为 1–1000 的整数。任一轴出错，程序在打开 CAN 前退出。文件加载后保留不可变快照。修改 JSON 后重新启动终端以加载新值。[配置加载器](canopen_pp/pp_config.py)
+
+## 发送一次失能测试批次
+
+启动终端后依次输入以下命令。等待 `init` 显示七轴失能后执行 `move-test`。保留终端输出，供逐帧比对。
+
+```text
+init
+move-test
+status
+exit
+```
+
+1. `move-test` 复查快照，使用 `PPEncoder.encode()` 编码七轴。全部成功后按现有映射打包 21 帧。RPDO1 的小端 `<iI` 对应有符号绝对位置和无符号速度，RPDO2 的 `<II` 对应无符号加速度和减速度，二者 DLC 均为 8。
+2. RPDO3 由各驱动器的 `control_data(disable_word)` 生成。节点 1–3 为 `00 00 01`（DLC 3），节点 4–7 为 `01 00 01 00 00`（DLC 5）。两组模式字节均为 1，控制字分别为 0000h、0001h。RobStride 的配置力矩显示在报告中，失能帧中的目标力矩恒为 0。
+3. 主线程预检失能状态及两路反馈。唯一的 SYNC 线程在实际发送前再次检查上一周期的七轴反馈，依次发送 201h–207h、301h–307h、401h–407h。调度器逐帧记录 TX echo 时间戳，收到末帧回显后发送本批次的 080h（DLC 0）。
+4. 对该次 SYNC 检查七轴 TPDO1、TPDO2 及状态字，逐节点打印工程输入、编码整数、CAN-ID、DLC、十六进制数据和回显时间。丢失该周期的反馈或出现非失能状态均报告失败。后续周期按原有 100 ms 调度继续发送 SYNC。
+5. 发送异常时，报告仅统计已获得回显的帧。缺少回显的帧在物理总线上的结果未知。调度器抑制后续空闲 SYNC，可通过 `disable` 或退出时的安全处理发送完整失能批次；参数不会自动补发。进入 Operational 后没有 PP 对象的 SDO 回读。[批次实现](canopen_pp/controller.py) · [报告](canopen_pp/move_test.py)
+
+## SocketCAN 抓包核对
+
+1. 本阶段使用主站 SocketCAN 接口 `can0` 验收。在主站另开一个终端，确认接口已按 1 Mbit/s 启用，然后在输入 `init` 前开始抓包。
+
+   ```bash
+   ip -details link show can0
+   candump -L can0 > pp-can0.log
+   ```
+
+2. 主站执行一次 `init` 和一次 `move-test`。观察后续几个 SYNC 周期再输入 `exit`，在监听端按 Ctrl-C 结束记录。以下命令提取三组 RPDO 和 SYNC，原始文件保留 TPDO 和其他流量。
+
+   ```bash
+   grep -E ' (20[1-7]|30[1-7]|40[1-7]|080)#' pp-can0.log
+   ```
+
+3. 找到 `201#` 开始的批次，逐帧与本次终端报告对照。检查 CAN-ID、DLC（每两个十六进制字符代表一个字节）、全部数据字节及顺序。分别按小端有符号位置和无符号轮廓值解码，与该轴四个编码整数核对。确认两种 RPDO3 的失能控制字、PP 模式及节点 4–7 的零力矩。
+4. 按时间戳确认 21 帧中间没有 SYNC，407h 之后紧跟批次 SYNC，随后有七轴两路 TPDO。检查整段记录只出现一次参数批次，后续普通 SYNC 继续运行。确认七轴状态字均为 Switch On Disabled 后，将本次抓包核对结果记入实机记录。
+
+终端的 `TRANSMISSION COMPLETED` 表示本批获得发送回显并收齐失能反馈。抓包核对使用同一次运行保存的 candump 日志。
+
+### 本阶段实机记录
+
+使用随附 JSON 在主站 `can0` 执行了一次 `init → move-test → exit`。主站接口的整段记录中仅有一组 21 帧 RPDO，逐帧核对了 ID、长度及数据。首帧到批次 SYNC 为 32.906 ms，末帧到 SYNC 为 1.990 ms，之后记录到 49 个普通 SYNC。批次 SYNC 后收齐 14 路反馈，节点 1–3 的状态字为 `4270h`，节点 4–7 为 `0040h`，全部为 Switch On Disabled。下列原始摘录从批次前一帧 SYNC 延续到批次后的下一帧 SYNC。[主站 can0 抓包摘录](docs/pp-test-can0.log)
+
+随后操作者提供了第二次运行的完整抓包，共 9348 帧。其中第 4504 至 4540 行包含唯一一批 21 帧 RPDO，按 CAN-ID、DLC 及全部数据字节与随附 JSON 的编码结果逐帧相符。期间穿插了节点 1、2 的 TPDO，没有 SYNC。第 4540 行的 `407#0100010000` 与第 4541 行的 `080#` 相隔 1.964 ms。批次前后均收齐七轴两路反馈，状态字分别为 `4270h`（节点 1–3）和 `0040h`（节点 4–7）。其后还有 83 个普通 SYNC，整段记录无重复参数批次。操作者确认抓包使用运行控制器的主站适配器 `can0`。**本阶段七轴失能 PP 参数下发已通过 can0 总线验收。**[第二次运行的主站抓包](pp-independent.log)
 
 ## 离线机械坐标转换
 
@@ -135,7 +191,7 @@ RobStride 三款手册 §5.6 给出 `6081h` 每计数 0.1 rpm、`6083h` 每计�
 
 进入 Operational 后，程序仅使用同步 PDO 和 SYNC。接收线程记录每次主站 SYNC 回显和两路 TPDO 的时间戳。长度错误使对应反馈失效。使能各阶段需要同一批次 SYNC 或更晚的一组完整反馈，状态通过掩码解析。终端等待输入期间接收及 SYNC 调度继续运行。各 RPDO 按发送回显排序，最后一帧回显后直接发送 SYNC。USB、操作系统调度及 CAN 仲裁会产生实际间隔。在 Kinco 节点 1，前期测试曾观察到类型 1 的控制字在 SYNC 前已影响状态，因此同批报文及后续 TPDO 确认不能证明七个功率级在同一物理时刻动作。[调度器](canopen_pp/communication.py) · [状态机](canopen_pp/controller.py)
 
-## 状态转换与失败处理
+## 常规使能模式的状态转换与失败处理
 
 对于 Ready、Switched On、Quick Stop Active 或部分已使能的组合，`enable` 先将整组归一到 Switch On Disabled，再逐阶段使能。全部已使能且处于 PP 时重复 `enable` 只确认反馈。Fault、Fault Reaction Active、未知状态、失效反馈会中断使能。中断后输出回退前各轴状态并尝试整组失能。批次传输中断会抑制空闲 SYNC，恢复时必须先以完整的失能批次覆盖待处理控制字。
 
@@ -147,12 +203,7 @@ Kinco 使用 Disable Voltage（`0000h`），RS06、RS00 和 EL05 使用厂家手
 .venv/bin/python -m pytest -q
 ```
 
-默认测试使用 python-can 虚拟总线和七个 canopen LocalNode SDO 服务，检查正常顺序、映射读回、SDO Abort、部分发送失败、故障及回退、反馈超时、模式和失能确认。实机用例单独开启，会实际使能对应电机并在结束前验证失能。运行时由一个主站控制总线，并确认机构能承受施加和移除转矩。
-
-```bash
-CANOPEN_HARDWARE_TEST=rs06 .venv/bin/python -m pytest -q -s tests/test_hardware.py
-CANOPEN_HARDWARE_TEST=seven .venv/bin/python -m pytest -q -s tests/test_hardware.py
-```
+默认测试使用 python-can 虚拟总线和七个 canopen LocalNode SDO 服务，检查正常顺序、映射读回、SDO Abort、部分发送失败、故障及回退、反馈超时、模式和失能确认。新增的配置及批次用例也在默认测试中运行。历史使能实机用例在参数测试模式下跳过。本阶段的失能实机验证使用上文的终端命令。
 
 此前使用三字节 RPDO3 布局时，已在 `can0`、1 Mbit/s、100 ms 主站周期先验证 RS06 节点 4，再对七轴做整组验证。整组测试中节点 5–7 初始为 Quick Stop Active。经失能归一后得到以下 TPDO1 实测值。
 

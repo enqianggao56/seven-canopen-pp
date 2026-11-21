@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "name": "seven_axis_pp_test",
+  "position_mode": "absolute",
+  "axes": {
+    "1": {
+      "position": 100.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0
+    },
+    "2": {
+      "position": 100.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0
+    },
+    "3": {
+      "position": 50.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0
+    },
+    "4": {
+      "position": 5.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0,
+      "torque_per_mille": 100
+    },
+    "5": {
+      "position": 5.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0,
+      "torque_per_mille": 100
+    },
+    "6": {
+      "position": 5.0,
+      "velocity": 5.0,
+      "acceleration": 10.0,
+      "deceleration": 10.0,
+      "torque_per_mille": 100
+    },
+    "7": {
+      "position": 1.0,
+      "velocity": 1.0,
+      "acceleration": 2.0,
+      "deceleration": 2.0,
+      "torque_per_mille": 100
+    }
+  }
+}

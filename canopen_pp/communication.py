@@ -150,6 +150,7 @@ class Batch:
     stamp: float = 0.0
     error: Exception | None = None
     finished: bool = False
+    echoes: list[tuple[int, float]] | None = None
 
 
 class SyncClock:
@@ -184,10 +185,14 @@ class SyncClock:
                             batch.error = exc
                     if batch and not batch.error:
                         for cob, data in batch.frames:
-                            self.adapter.transmit(cob, data)
+                            stamp = self.adapter.transmit(cob, data)
+                            if batch.echoes is not None:
+                                batch.echoes.append((cob, stamp))
                     stamp = self.adapter.transmit(0x080, b"")
                     if batch:
                         batch.stamp = stamp
+                        if not batch.error and batch.echoes is not None:
+                            batch.echoes.append((0x080, stamp))
                     self.error = None
                 except Exception as exc:
                     # A partial batch must not be followed by an idle SYNC.
@@ -203,7 +208,7 @@ class SyncClock:
                 if due <= monotonic():
                     due = monotonic() + self.period
 
-    def batch(self, frames, *, guard=None, disable=False):
+    def batch(self, frames, *, guard=None, disable=False, echoes=None):
         with self.cv:
             # Only a complete replacement batch of disable words can resume a
             # clock inhibited by a partial CAN transmission.
@@ -211,7 +216,7 @@ class SyncClock:
                 self.check()
             if not self.thread.is_alive() or self.request is not None:
                 raise ControlError("SYNC 调度器无法接受批次")
-            batch = Batch(tuple(frames), guard)
+            batch = Batch(tuple(frames), guard, echoes=echoes)
             self.request = batch
             self.cv.notify_all()
             try:

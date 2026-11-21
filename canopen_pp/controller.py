@@ -6,7 +6,9 @@ from . import config
 from .communication import SyncClock
 from .drives import ControlError, state
 from .mechanical import MechanicalConversionError, MechanicalConverter
+from .move_test import batch_report, prepare
 from .pdo import Feedback, check_unused_slots, configure_slot, slots, verify_slot
+from .pp import PPEncoder
 
 DISABLED = "Switch On Disabled"
 READY = "Ready to Switch On"
@@ -21,6 +23,7 @@ class Controller:
         if not isfinite(period) or not 0 < period < config.FEEDBACK_TIMEOUT:
             raise ControlError("SYNC 周期必须大于零并短于反馈超时")
         self.bus, self.drives, self.report = bus, drives, report
+        self.parameter_test_only = config.PARAMETER_TEST_ONLY
         # Display configuration errors belong to the affected row, even during init.
         self.mechanical = MechanicalConverter(config.MECHANICAL_CONFIG, validate_on_init=False)
         self.feedback = Feedback(bus.network, drives)
@@ -53,11 +56,15 @@ class Controller:
         for n in self.drives:
             self.bus.nmt(n, 1)
         self.clock.thread.start()
-        self.wait_feedback(self.drives, description="初始 TPDO1/TPDO2", both=True)
+        samples = self.wait_feedback(self.drives, description="初始 TPDO1/TPDO2", both=True)
+        if self.parameter_test_only:
+            for n, s in samples.items():
+                if state(s.word) != DISABLED:
+                    raise ControlError(f"Node {n} 初始状态 {state(s.word)}，需要 {DISABLED}")
         self.initialized = True
 
     def wait_feedback(self, nodes, *, description, since=0, target=None, pp=False,
-                      both=False, enabling=False):
+                      both=False, enabling=False, exact_cycle=False):
         deadline = monotonic() + config.TRANSITION_TIMEOUT
         while True:
             self.clock.check()
@@ -68,6 +75,11 @@ class Controller:
                 s = samples[n]
                 valid = monotonic() - s.received1 <= config.FEEDBACK_TIMEOUT
                 actual = state(s.word)
+                if exact_cycle:
+                    if max(s.cycle1, s.cycle2) > since:
+                        raise ControlError("未能在批次 SYNC 对应周期确认七轴 TPDO1/TPDO2")
+                    if valid and s.cycle1 == since and actual != target:
+                        raise ControlError(f"Node {n} {description}: {actual}, 6041=0x{s.word:04X}")
                 if enabling and valid and s.cycle1 >= since and actual in FAULTS:
                     raise ControlError(f"Node {n} {description}: {actual}, 6041=0x{s.word:04X}")
                 cycles.add(s.cycle1)
@@ -126,6 +138,8 @@ class Controller:
         return frames
 
     def enable(self):
+        if self.parameter_test_only:
+            raise ControlError("PARAMETER TEST ONLY 模式禁止 enable")
         if not self.initialized:
             raise ControlError("请先 init")
         try:
@@ -153,6 +167,28 @@ class Controller:
             self.report("使能中止，回退前的 TPDO 反馈\n" + self.status())
             self.try_disable()
             raise
+
+    def move_test(self, targets):
+        if not self.initialized:
+            raise ControlError("请先 init")
+        try:
+            axes = prepare(targets, self.drives, PPEncoder(self.mechanical))
+        except ValueError as exc:
+            raise ControlError(f"PP 配置错误: {exc}") from exc
+        frames = tuple(axis.frames[i] for i in range(3) for axis in axes)
+        echoes = []
+        samples = None
+        try:
+            self.guard(DISABLED)
+            self.needs_disable = True
+            stamp = self.clock.batch(frames, guard=lambda: self.guard(DISABLED), echoes=echoes)
+            samples = self.wait_feedback(self.drives, description="批次后失能确认", since=stamp,
+                                         target=DISABLED, both=True, exact_cycle=True)
+        except ControlError as exc:
+            self.report(batch_report(axes, echoes, samples, exc))
+            raise
+        self.needs_disable = False
+        self.report(batch_report(axes, echoes, samples, None))
 
     def disable(self):
         if self.clock.thread.ident is None:

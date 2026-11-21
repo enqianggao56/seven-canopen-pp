@@ -38,6 +38,8 @@ def verify_capture(trace, nodes):
 
 @pytest.mark.parametrize("nodes,selection", [([4], "rs06"), (list(range(1, 8)), "seven")])
 def test_hardware(nodes, selection):
+    if config.PARAMETER_TEST_ONLY:
+        pytest.skip("使能实机用例在 PARAMETER TEST ONLY 模式下停用")
     if os.getenv("CANOPEN_HARDWARE_TEST") != selection:
         pytest.skip(f"requires CANOPEN_HARDWARE_TEST={selection}")
     settings = {k: v for k, v in config.CAN_CONFIG.items() if k != "sync_period_ms"}
