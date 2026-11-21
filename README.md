@@ -64,6 +64,42 @@ Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocit
 
 TPDO1 超时时，`Position`、`Raw(inc)` 和模式显示 `--`，状态列标记 `TPDO1 STALE`，状态字保留最后一次有效读数。TPDO2 超时时，`Velocity` 显示 `--`，`Vel(raw)` 显示 `TPDO2 STALE`。两路独立更新。有效反馈的某个物理量转换失败时，对应列显示 `CONV ERROR`，原始整数仍可读，表后列出节点、字段及原因。
 
+## 离线 PP 参数编码（阶段 01）
+
+`PPEncoder.encode()` 接受一个轴的绝对目标和三个正的轮廓幅值，返回四个对象字典整数。可在只有 Python 标准库的环境中运行。下面的节点 4 示例中，负角度决定目标位置的符号，加速和减速可以分别指定。[编码器](canopen_pp/pp.py)
+
+```python
+from canopen_pp.pp import PPCommand, PPEncoder
+
+command = PPCommand(node_id=4, target_position=-45, velocity=60, acceleration=12, deceleration=3)
+params = PPEncoder().encode(command)
+# PPParameters(target_position=-2048, profile_velocity=100,
+#              profile_acceleration=20, profile_deceleration=5)
+```
+
+| 节点 | 目标闭区间 | 速度上限 | 加速度上限 | 减速度上限 |
+|---|---|---:|---:|---:|
+| 1、2、3 | 分别为 0–1200、0–1100、0–700 mm | 600 mm/s | 600 mm/s² | 600 mm/s² |
+| 4、5、6 | 分别为 ±90、±45、±360° | 720 °/s | 720 °/s² | 720 °/s² |
+| 7 | 0–20 mm | 14 mm/s | 14 mm/s² | 14 mm/s² |
+
+这些数值用于机械设计限值检查，实机调试速度另行选定。编码器只接受 1–7 的整数节点和有限的 `int`、`float` 工程量，拒绝布尔值。目标由 `MechanicalConverter.target_to_raw()` 检查行程、方向、零点及 I32 范围。若非零目标量化后与机械零点重合，编码器也会拒绝。位置对象为 I32（−2³¹ 至 2³¹−1），三项轮廓对象均为 U32（0 至 2³²−1）。两份 EDS 的这四个条目均未给出更窄的取值范围。[设计限值](canopen_pp/config.py) · [Kinco EDS](vendor/motor.eds) · [RobStride EDS](vendor/RS06.eds)
+
+设 K 为参考轴每转对应的机械位移，v 为速度，a、d 分别为加速度和减速度。下表给出量化前的计数。
+
+| 节点及项目参考轴 | 6081h | 6083h | 6084h |
+|---|---|---|---|
+| 1–3，Kinco 电机轴，编码器分辨率 E = 65536 | (v / K) × 60 × 512 × E / 1875 | (a / K) × 65536 × E / 4000000 | (d / K) × 65536 × E / 4000000 |
+| 4–7，RobStride 输出法兰 | (v / K) × 600 | (a / K) × 600 | (d / K) × 600 |
+
+Kinco §7.3 对 `6081h` 明列 rpm 到 DEC 的比例，对 `6083h/6084h` 明列 rev/s² 到 DEC 的比例。表 8–2 指定编码器分辨率，表 9–11 给出 CANopen 样例，200 rpm 编为 `0x00369D03`，100 rev/s² 编为 `0x0001A36E`。编码路径独立于 `606Ch` 的反馈配置。[iSMD 手册](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf)
+
+RobStride 三款手册 §5.6 给出 `6081h` 每计数 0.1 rpm、`6083h` 每计数 0.1 rpm/s。CiA 402 §12.3.9 规定可选对象 `6084h` 与 `6083h` 同单位。项目共用的 RS06 EDS 将 `6084h` 声明为可写、可映射的 U32，据此编码为 0.1 rpm/s。三款手册的 CANopen PP 表均未单列该对象，也未逐对象标注参考轴。离线计算采用项目机械表定义的输出法兰，节点 7 使用每法兰转 2 mm。固件的实际参考轴仍待实机验收。[七轴机械表](vendor/readme.md) · [RS06 §5.6](vendor/RS06使用说明书260428.pdf) · [RS00 §5.6](vendor/RS00使用说明书260428.pdf) · [EL05 §5.6](vendor/EL05使用说明书2600428.pdf) · [CiA 402 §12.3.9](vendor/CanOpen-DS402协议-电机驱动器.pdf)
+
+**现场配置记录**　现场已通过上位机将节点 4、5、6、7 的 `acc_status` 全部设为 `1`，四个节点的 PP 轮廓减速度均可独立于加速度配置。通过 CANopen 写入 `6084h` 后的实际减速响应仍待实机验收。
+
+手册未规定主站如何舍入任意小数输入。本实现对三项轮廓幅值分别检查设计限值，按输入的十进制表示精确换算，然后向下取整。因此在设计上限处也不会因量化而增大幅值。换算值超过 U32、取整后为零或任一字段无效时，整个调用抛出 `ValueError` 或其子类。返回值只表示离线编码成功。
+
 ## 每轴的五组 PDO
 
 所有 PDO 使用经典 CAN、标准标识符、小端布局和传输类型 1。表中 `n` 是节点号。[各字段字节偏移](vendor/readme.md)

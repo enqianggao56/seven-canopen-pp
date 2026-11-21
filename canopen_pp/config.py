@@ -32,6 +32,25 @@ AXIS_CONFIG = {
 
 
 @dataclass(frozen=True)
+class PPDesignLimits:
+    velocity: int
+    acceleration: int
+    deceleration: int
+
+
+# Engineering units on the mechanical axis (mm or deg, per s and per s²).
+PP_DESIGN_LIMITS = {
+    1: PPDesignLimits(600, 600, 600),
+    2: PPDesignLimits(600, 600, 600),
+    3: PPDesignLimits(600, 600, 600),
+    4: PPDesignLimits(720, 720, 720),
+    5: PPDesignLimits(720, 720, 720),
+    6: PPDesignLimits(720, 720, 720),
+    7: PPDesignLimits(14, 14, 14),
+}
+
+
+@dataclass(frozen=True)
 class AxisMechanicalConfig:
     node_id: int
     name: str
