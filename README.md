@@ -2,8 +2,6 @@
 
 通过终端初始化七个驱动器、切换 CiA 402 状态并查看真实反馈。启动终端后由操作者输入 `init`，驱动器只在收到 `enable` 命令后进入使能流程。
 
-单轴 PP 台架调试使用独立入口 `python -m canopen_pp.bench`。可按节点执行只读检查、失能参数读回、人工使能、首次定位及第二次定位中的受控停止验证。当前七轴的已验证停止记录为空，实机流程最多可完成前两步。[单轴调试步骤、联锁条件及日志格式](docs/single-axis-pp.md)
-
 ## 运行
 
 运行所需的两份 EDS、四份设备手册和 CiA 402 协议 PDF 均可在 [vendor 目录](vendor/) 中查阅。
@@ -24,7 +22,7 @@ python3.11 -m venv .venv
 | `status` | 与 `init` 完成时相同，显示状态字、CiA 402 状态、6061 模式，并列显示机械实际位置、原始位置、机械实际速度及 606C 原始速度。机械量保留三位小数。 |
 | `exit`、EOF、Ctrl-C | 有轴通电或反馈不确定时先尝试整组失能，验证后关闭 SYNC 和 CAN。无法确认时输出 `Disable not confirmed` 及节点状态。 |
 
-CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。从站的 `1005h/1006h` 保持现场设置，终端未启用 Heartbeat。终端命令只使用上述初始化、使能、失能及反馈流程。单轴轮廓参数通过下述 Python 接口显式写入。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
+CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 `sync_period_ms=100`，设置为 `50` 即使用 50 ms。主站发送标准帧 `080h`、DLC 0。程序不访问从站的 `1005h/1006h`。本阶段不发送位置目标、轮廓参数、Bit 4 触发或 Heartbeat。替换 CAN 接口时，后端需能区分本机发送回显并提供报文时间戳。[配置文件](canopen_pp/config.py)
 
 ## 离线机械坐标转换
 
@@ -65,54 +63,6 @@ Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocit
 - **RobStride** 使用 `velocity_unit="rpm_0_1"`。三款手册 §5.4 均标注 `606Ch` 每计数为 0.1 rpm，机械速度为 `raw × 0.1 × direction × K / 60`。项目按输出法兰作为速度参考轴换算，`606Ch` 条目未单独说明参考轴，现场对应关系仍待验证。换算直接使用项目的 K。[RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf)
 
 TPDO1 超时时，`Position`、`Raw(inc)` 和模式显示 `--`，状态列标记 `TPDO1 STALE`，状态字保留最后一次有效读数。TPDO2 超时时，`Velocity` 显示 `--`，`Vel(raw)` 显示 `TPDO2 STALE`。两路独立更新。有效反馈的某个物理量转换失败时，对应列显示 `CONV ERROR`，原始整数仍可读，表后列出节点、字段及原因。
-
-## 单轴 PP 参数编码与写入
-
-`PPMotionCommand` 接受绝对目标位置、轮廓速度、加速度和减速度。位置单位沿用各轴的 mm 或 deg，三个轮廓参数都是正幅值，单位依次为 mm/s、mm/s²、mm/s²，或相应的角度单位。节点 7 的三个量均针对丝杠螺母。位置通过既有 `MechanicalConverter.target_to_raw()` 换算，方向反转与零点只作用于位置。[编码接口](canopen_pp/pp.py)
-
-设 K 为参考轴每转机械位移，E 为 iSMD 编码器分辨率 65536。下表给出舍入前的原始值，v、a、d 分别是速度、加速度和减速度的机械幅值。
-
-| PP 对象 | 类型 | Kinco iSMD，节点 1–3 | RobStride，节点 4–7 |
-|---|---|---|---|
-| 607Ah 目标位置 | I32 | 电机轴每转 65536 inc | 项目配置为输出法兰每转 16384 inc |
-| 6081h 轮廓速度 | U32 | `(v/K) × 60 × 512 × E / 1875` DEC | `(v/K) × 600`，每计数 0.1 rpm |
-| 6083h 轮廓加速度 | U32 | `(a/K) × 65536 × E / 4000000` DEC | `(a/K) × 600`，每计数 0.1 rpm/s |
-| 6084h 轮廓减速度 | U32 | `(d/K) × 65536 × E / 4000000` DEC | `(d/K) × 600`，每计数 0.1 rpm/s |
-
-Kinco 的比例取自 §7.3 和表 8-2。输入 200 rpm 与 100 rps/s 分别编码为 `03 9D 36 00` 与 `6E A3 01 00`，可与表 9-11 逐字节核对。轮廓编码始终按这些对象自己的比例计算。[iSMD 手册](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf)
-
-RobStride 三款手册 §5.6 列出 607Ah、6081h、6083h，以及单位为 0.1% 额定负载的 I16 力矩上限 6071h。现场已确认节点 4–7 的 PP 参考轴与输出法兰为 **1:1**，编码直接使用输出法兰的 K 和 C。节点 7 每法兰转对应 2 mm 螺母行程。现场已通过上位机设置 `acc_status=1`，每条命令的加速度和减速度可分别给定。三款手册在私有协议章节说明独立减速功能，CANopen 章节未单列 6084h。随仓 EDS 声明该对象为可映射 U32，CiA 402 §12.3.9 明确其单位与 6083h 相同。初始化须逐台读回 RPDO2 映射，实际减速斜率仍待实机测量。[RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf) · [RS EDS](vendor/RS06.eds) · [CiA 402](vendor/CanOpen-DS402协议-电机驱动器.pdf)
-
-以下 RS06 示例可离线执行。目标为 −45°，速度 60°/s，加速度 120°/s²，减速度 30°/s²。
-
-```python
-from canopen_pp.pp import PPMotionCommand, PPParameterEncoder
-
-command = PPMotionCommand(node_id=4, target_position=-45, profile_velocity=60,
-                          profile_acceleration=120, profile_deceleration=30)
-parameters = PPParameterEncoder().encode(command)
-for cob, data in parameters.frames():
-    print(f"{cob:03X} [{len(data)}] {data.hex(' ').upper()}")
-```
-
-```text
-204 [8] 00 F8 FF FF 64 00 00 00
-304 [8] C8 00 00 00 32 00 00 00
-```
-
-两帧小端解码依次得到 −2048 inc、100、200、50。编码器拒绝非有限值、负或零轮廓幅值、超过 U32 的幅值，以及正输入量化为零的情况。幅值取最近整数，半计数向上，误差至多半个通信增量。若已配置机械幅值上下限，请求值与量化后的工程值都须在闭区间内。节点 4 的 ±90° 目标软限位同样适用于此接口。
-
-七轴的 PP 机械设计上限集中在 `config.PP_WRITE_LIMITS`。三个幅值均要求大于零，各自的上限可取等号。
-
-| 节点 | 机械轴 | 速度上限 | 加速度上限 | 减速度上限 |
-|---|---|---:|---:|---:|
-| 1–3 | 横移、上下、伸缩 | 600 mm/s | 600 mm/s² | 600 mm/s² |
-| 4–6 | 小臂上下旋转、小臂左右旋转、绕轴旋转 | 720 °/s | 720 °/s² | 720 °/s² |
-| 7 | 夹爪螺母行程 | 14 mm/s | 14 mm/s² | 14 mm/s² |
-
-**写入接口**为 `controller.write_pp_parameters(command) -> float`。默认离线编码和写入均校验上表的设计限值。缺少该节点的限值或配置参考轴不匹配时，写入会报错。位置异常沿用 `MechanicalConversionError` 系列，轮廓参数错误为 `PPParameterError`，映射、反馈或总线错误为 `ControlError`。[写入配置](canopen_pp/config.py) · [控制器](canopen_pp/controller.py)
-
-完成 `init` 的映射读回后，调度器在发送前检查该节点本周期新鲜的 TPDO1 为 Switch On Disabled，再按顺序发送 RPDO1、RPDO2、SYNC。返回值是该次 SYNC 的本机发送回显时间戳。当前 TPDO 没有回传这四个参数，驱动器内部采纳参数仍须另行验证。RobStride 将使能后写目标列为启动步骤，后续状态机需要考虑已装载目标的行为。本接口只发送两帧参数，6071h 仍由原有 RPDO3 使能流程负责。
 
 ## 每轴的五组 PDO
 

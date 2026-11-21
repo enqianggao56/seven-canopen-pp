@@ -2,7 +2,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from queue import Empty
 from threading import Condition, Event, Thread
 from time import monotonic
 
@@ -15,15 +14,13 @@ VENDOR = Path(__file__).resolve().parents[1] / "vendor"
 
 
 class Adapter:
-    """Checked SDO in Pre-operational, plus four read-only bench measurements before NMT."""
-    def __init__(self, drives, settings, *, listener=None):
+    """SDO is available only between addressed Pre-operational and the first NMT Start."""
+    def __init__(self, drives, settings):
         self.network = canopen.Network()
         self.network.NOTIFIER_CYCLE = 0.1
         self.condition = Condition()
         self.pending = None
         self.echo_time = None
-        self.probe_request = None
-        self.probe_echo_seen = False
         self.external_sync = False
         self.preoperational = set()
         self.operational_started = False
@@ -31,8 +28,6 @@ class Adapter:
         self.rpdo_aliases = {base + n for n in drives for base in (0x200, 0x300, 0x400)}
         self.rpdo_conflict = None
         self.network.listeners = [self.receive]
-        if listener is not None:
-            self.network.listeners.append(listener)
         self.nodes = {}
         for n, drive in drives.items():
             node = self.network.add_node(n, str(VENDOR / drive.eds))
@@ -51,8 +46,6 @@ class Adapter:
             return
         with self.condition:
             wire_id = msg.arbitration_id | (0x20000000 if msg.is_extended_id else 0)
-            if not msg.is_rx and self.probe_request == (wire_id, msg.data):
-                self.probe_echo_seen = True
             if not msg.is_rx and self.pending == (wire_id, msg.data):
                 self.echo_time = msg.timestamp
                 if wire_id == 0x80 and self.on_sync:
@@ -74,28 +67,6 @@ class Adapter:
 
     def read(self, n, index, sub=0):
         self.require_preop(n)
-        return self._upload(n, index, sub)
-
-    def probe(self, n, index):
-        """Addressed, read-only commissioning probe before this master issues any NMT."""
-        if self.operational_started or self.preoperational or n not in self.nodes:
-            raise ControlError("只读探测只允许在本次会话的 NMT 初始化之前")
-        if index not in (0x6041, 0x6061, 0x6063, 0x6064, 0x606C):
-            raise ControlError(f"只读探测未允许对象 {index:04X}")
-        node = self.nodes[n]
-        timeout = max(config.INITIAL_SDO_TIMEOUT, config.SDO_TIMEOUT)
-        # A probe can follow an operator pause, even on a previously responsive node.
-        node.sdo.RESPONSE_TIMEOUT = timeout
-        with self.condition:
-            self.probe_request = (node.sdo.rx_cobid, b"\x40" + index.to_bytes(2, "little") + bytes(5))
-            self.probe_echo_seen = False
-        try:
-            return self._upload(n, index, 0)
-        finally:
-            with self.condition:
-                self.probe_request = None
-
-    def _upload(self, n, index, sub):
         node = self.nodes[n]
         try:
             var = node.object_dictionary.get_variable(index, sub)
@@ -106,19 +77,7 @@ class Adapter:
                 raise ValueError(f"期望 {len(var)} bit，收到 {len(data)*8} bit")
             return var.decode_raw(data)
         except Exception as exc:
-            message = f"Node {n} SDO read {index:04X}:{sub:02X}: {exc}"
-            if isinstance(exc, canopen.SdoCommunicationError) and isinstance(exc.__context__, Empty):
-                with self.condition:
-                    if self.probe_request is not None:
-                        echo = "已见" if self.probe_echo_seen else "未见"
-                        message += (f"（只读探测等待 {node.sdo.RESPONSE_TIMEOUT:g} s，"
-                                    f"{echo} 0x{node.sdo.rx_cobid:03X} 请求的本机发送回显，"
-                                    f"未收到 0x{node.sdo.tx_cobid:03X} 应答）")
-                try:
-                    self.network.check()
-                except Exception as rx_error:
-                    raise ControlError(f"{message}，CAN 接收线程异常: {rx_error}") from rx_error
-            raise ControlError(message) from exc
+            raise ControlError(f"Node {n} SDO read {index:04X}:{sub:02X}: {exc}") from exc
         finally:
             node.sdo.RESPONSE_TIMEOUT = config.SDO_TIMEOUT
 

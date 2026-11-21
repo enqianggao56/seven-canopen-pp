@@ -1,4 +1,4 @@
-"""Initialization, synchronous CiA 402 commands and disabled-axis PP parameter writes."""
+"""Initialization and synchronous CiA 402 commands. No trajectory or set-point writer."""
 from math import isfinite
 from time import monotonic, sleep
 
@@ -7,7 +7,6 @@ from .communication import SyncClock
 from .drives import ControlError, state
 from .mechanical import MechanicalConversionError, MechanicalConverter
 from .pdo import Feedback, check_unused_slots, configure_slot, slots, verify_slot
-from .pp import PPMotionCommand, PPParameterEncoder
 
 DISABLED = "Switch On Disabled"
 READY = "Ready to Switch On"
@@ -24,14 +23,13 @@ class Controller:
         self.bus, self.drives, self.report = bus, drives, report
         # Display configuration errors belong to the affected row, even during init.
         self.mechanical = MechanicalConverter(config.MECHANICAL_CONFIG, validate_on_init=False)
-        self.pp = PPParameterEncoder(drives, self.mechanical)
         self.feedback = Feedback(bus.network, drives)
         self.bus.on_sync = self.feedback.sync
         self.clock = SyncClock(bus, period)
         self.initialized = False
         self.needs_disable = False
 
-    def initialize(self, *, preop_setup=None):
+    def initialize(self):
         if self.initialized:
             return
         # Passive check before changing the nodes' NMT states.
@@ -52,8 +50,6 @@ class Controller:
                 verified.append((n, slot, desired))
         for n, slot, desired in verified:
             verify_slot(self.bus, n, slot, desired)
-        if preop_setup is not None:
-            preop_setup()
         for n in self.drives:
             self.bus.nmt(n, 1)
         self.clock.thread.start()
@@ -129,34 +125,11 @@ class Controller:
             frames.append((0x400+n, drive.control_data(word)))
         return frames
 
-    def write_pp_parameters(self, command: PPMotionCommand) -> float:
-        """Stage one node's RPDO1/2. Return the SYNC TX timestamp, not a drive acknowledgement."""
-        if not self.initialized:
-            raise ControlError("PP 参数写入需要先完成 init 和 PDO 映射读回验证")
-        encoded = self.pp.encode(command, for_write=True)
-        n = command.node_id
-
-        def guard_disabled():
-            # On RobStride a target written after enable can itself initiate motion (§5.6).
-            s = self.feedback.snapshot()[n]
-            if (not s.cycle1 or s.cycle1 != self.feedback.sync_stamp
-                    or monotonic() - s.received1 > config.FEEDBACK_TIMEOUT or state(s.word) != DISABLED):
-                raise ControlError(f"Node {n} PP 参数写入需要当前周期 TPDO1 确认 {DISABLED}，"
-                                   f"6041=0x{s.word:04X}")
-
-        return self.clock.batch(encoded.frames(), guard=guard_disabled)
-
-    def enable(self, *, interlock=None):
+    def enable(self):
         if not self.initialized:
             raise ControlError("请先 init")
-        samples = None
-        if interlock is not None:
-            samples = self.wait_feedback(self.drives, description="人工使能前反馈", both=True)
-            if any(state(s.word) != DISABLED for s in samples.values()):
-                raise ControlError("调试使能要求当前处于 Switch On Disabled")
         try:
-            if samples is None:
-                samples = self.wait_feedback(self.drives, description="使能前反馈", both=True)
+            samples = self.wait_feedback(self.drives, description="使能前反馈", both=True)
             if all(state(s.word) == ENABLED and s.mode == 1 for s in samples.values()):
                 return
             # Normalize mixed powered states, including Quick Stop Active. Never reset faults.
@@ -169,12 +142,8 @@ class Controller:
                 self.needs_disable = True
             previous = DISABLED
             for cw, target in ((6, READY), (7, SWITCHED), (15, ENABLED)):
-                def check_stage():
-                    self.guard(previous)
-                    if interlock is not None:
-                        interlock()
-
-                stamp = self.clock.batch(self.frames(self.drives, cw), guard=check_stage)
+                stamp = self.clock.batch(self.frames(self.drives, cw),
+                                         guard=lambda: self.guard(previous))
                 samples = self.wait_feedback(self.drives, since=stamp, target=target, pp=(cw == 15),
                                              both=True, enabling=True, description=f"0x{cw:04X} → {target}")
                 words = " ".join(f"N{n}=0x{samples[n].word:04X}" for n in self.drives)
@@ -182,18 +151,15 @@ class Controller:
                 previous = target
         except BaseException:
             self.report("使能中止，回退前的 TPDO 反馈\n" + self.status())
-            if interlock is None:
-                self.try_disable()
-            # The bench session handles failure with its commissioned stop policy.
+            self.try_disable()
             raise
 
-    def disable(self, *, interlock=None):
+    def disable(self):
         if self.clock.thread.ident is None:
             raise ControlError("Disable not confirmed，SYNC 尚未运行")
         self.needs_disable = True
         try:
-            # Only unconditional replacement words may recover an inhibited SYNC clock.
-            stamp = self.clock.batch(self.frames(self.drives), disable=interlock is None, guard=interlock)
+            stamp = self.clock.batch(self.frames(self.drives), disable=True)
             self.wait_feedback(self.drives, since=stamp, target=DISABLED, description="RPDO3 失能")
         except Exception as exc:
             raise ControlError(f"Disable not confirmed: {exc}") from exc
