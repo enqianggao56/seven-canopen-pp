@@ -25,10 +25,11 @@ AXIS_CONFIG = {
     1: Axis("Kinco", "横移"),
     2: Axis("Kinco", "上下"),
     3: Axis("Kinco", "伸缩"),
-    4: Axis("RS06", "小臂上下旋转"),
-    5: Axis("RS00", "小臂左右旋转"),
-    6: Axis("EL05", "绕轴旋转"),
-    7: Axis("EL05", "夹爪"),
+    4: Axis("Kinco", "大臂旋转"),
+    5: Axis("RS06", "小臂上下旋转"),
+    6: Axis("RS00", "小臂左右旋转"),
+    7: Axis("EL05", "绕轴旋转"),
+    8: Axis("EL05", "夹爪"),
 }
 
 
@@ -44,23 +45,24 @@ PP_DESIGN_LIMITS = {
     1: PPDesignLimits(600, 600, 600),
     2: PPDesignLimits(600, 600, 600),
     3: PPDesignLimits(600, 600, 600),
-    4: PPDesignLimits(720, 720, 720),
+    4: PPDesignLimits(150, 150, 150),
     5: PPDesignLimits(720, 720, 720),
     6: PPDesignLimits(720, 720, 720),
-    7: PPDesignLimits(14, 14, 14),
+    7: PPDesignLimits(720, 720, 720),
+    8: PPDesignLimits(14, 14, 14),
 }
 
 
 # Allowed position error in the mechanical axis unit (mm or deg).
 PP_POSITION_TOLERANCES = {
     1: .02, 2: .02, 3: .02,
-    4: .05, 5: .05, 6: .05,
-    7: .005,
+    4: .05, 5: .05, 6: .05, 7: .05,
+    8: .005,
 }
 
 # Statusword bits required in addition to actual position feedback.
-PP_ACK_NODES = frozenset({1, 2, 3})
-PP_TARGET_REACHED_NODES = frozenset({1, 2, 3})
+PP_ACK_NODES = frozenset({1, 2, 3, 4})
+PP_TARGET_REACHED_NODES = frozenset({1, 2, 3, 4})
 PP_ACK_TIMEOUT = 2.0
 PP_SETTLING_MARGIN = 3.0
 
@@ -93,9 +95,10 @@ MECHANICAL_CONFIG = {
         (1, "电机轴",   "mm",   12, 65536,    0, 1200, 0, 1, "kinco_606c_dec"),
         (2, "电机轴",   "mm",   12, 65536,    0, 1100, 0, 1, "kinco_606c_dec"),
         (3, "电机轴",   "mm",  9.5, 65536,    0,  700, 0, 1, "kinco_606c_dec"),
-        (4, "输出法兰", "deg", 360, 16384,  -90,   90, 0, 1, "rpm_0_1"),
-        (5, "输出法兰", "deg", 360, 16384,  -45,   45, 0, 1, "rpm_0_1"),
-        (6, "输出法兰", "deg", 360, 16384, -360,  360, 0, 1, "rpm_0_1"),
-        (7, "输出法兰", "mm",    2, 16384,    0,   20, 0, 1, "rpm_0_1"),
+        (4, "电机轴",   "deg",   3, 65536,  -55,   55, 0, 1, "kinco_606c_dec"),  # 120:1
+        (5, "输出法兰", "deg", 360, 16384,  -90,   90, 0, 1, "rpm_0_1"),
+        (6, "输出法兰", "deg", 360, 16384,  -45,   45, 0, 1, "rpm_0_1"),
+        (7, "输出法兰", "deg", 360, 16384, -360,  360, 0, 1, "rpm_0_1"),
+        (8, "输出法兰", "mm",    2, 16384,    0,   20, 0, 1, "rpm_0_1"),
     )
 }

@@ -20,7 +20,7 @@ def verify_capture(trace, nodes, targets):
         assert not (0x601 <= cob <= 0x67F or 0x201 <= cob <= 0x27F or 0x301 <= cob <= 0x37F)
         if cob in [0x400+n for n in nodes]:
             n = cob - 0x400
-            if n >= 4:
+            if n >= 5:
                 cw, mode, torque = struct.unpack("<Hbh", m.data)
                 assert torque == (0 if cw == 1 else torques[n])
             else:
@@ -35,23 +35,24 @@ def verify_capture(trace, nodes, targets):
             cycle = []
     assert not cycle
     assert batches[-4:] == [[cw]*len(nodes) for cw in (6, 7, 15)] + [
-        [0 if n < 4 else 1 for n in nodes]]
+        [0 if n < 5 else 1 for n in nodes]]
 
 
-@pytest.mark.parametrize("nodes,selection", [([4], "rs06"), (list(range(1, 8)), "seven")])
+@pytest.mark.parametrize("nodes,selection", [([5], "rs06"), (list(range(1, 9)), "eight")])
 def test_hardware(nodes, selection):
     if config.PARAMETER_TEST_ONLY:
         pytest.skip("使能实机用例在 PARAMETER TEST ONLY 模式下停用")
     if os.getenv("CANOPEN_HARDWARE_TEST") != selection:
         pytest.skip(f"requires CANOPEN_HARDWARE_TEST={selection}")
     settings = {k: v for k, v in config.CAN_CONFIG.items() if k != "sync_period_ms"}
-    targets = load_targets()
     with can.Bus(**settings) as monitor:
         trace = []
         listener = can.Notifier(monitor, [trace.append], timeout=.02)
         try:
             c = connect({n: config.AXIS_CONFIG[n] for n in nodes}, config.CAN_CONFIG)
             try:
+                online = list(c.online_nodes)
+                targets = load_targets(nodes=online)
                 print("初始 TPDO\n" + c.status(), flush=True)
                 c.enable(targets)
                 print("使能 TPDO\n" + c.status(), flush=True)
@@ -61,4 +62,4 @@ def test_hardware(nodes, selection):
                 c.close()
         finally:
             listener.stop()
-    verify_capture(trace, nodes, targets)
+    verify_capture(trace, online, targets)

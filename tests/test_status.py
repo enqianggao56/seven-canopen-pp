@@ -32,7 +32,7 @@ def offline(monkeypatch):
 
 
 def inject(c, node, pos, vel, *, pos_age=0, vel_age=0):
-    word = 0x4637 if node <= 3 else 0x0037
+    word = 0x4637 if node <= 4 else 0x0037
     c.bus.network.notify(0x180 + node, struct.pack("<Hib", word, pos, 1), TIME - pos_age)
     c.bus.network.notify(0x280 + node, struct.pack("<i", vel), TIME - vel_age)
 
@@ -50,10 +50,11 @@ def test_init_and_status_show_physical_and_raw_values(offline, monkeypatch, caps
         (1, 3276800, 65536, "600.000 mm", "0.732 mm/s"),
         (2, 2730667, 32768, "500.000 mm", "0.366 mm/s"),
         (3, 1379705, 65536, "200.000 mm", "0.580 mm/s"),
-        (4, 2048, 100, "45.000 deg", "60.000 deg/s"),
-        (5, 1365, 50, "29.993 deg", "30.000 deg/s"),
-        (6, 8192, 200, "180.000 deg", "120.000 deg/s"),
-        (7, 81920, 300, "10.000 mm", "1.000 mm/s"),
+        (4, 65536, 65536, "3.000 deg", "0.183 deg/s"),
+        (5, 2048, 100, "45.000 deg", "60.000 deg/s"),
+        (6, 1365, 50, "29.993 deg", "30.000 deg/s"),
+        (7, 8192, 200, "180.000 deg", "120.000 deg/s"),
+        (8, 81920, 300, "10.000 mm", "1.000 mm/s"),
     ]
     for node, pos, vel, _, _ in cases:
         inject(c, node, pos, vel)
@@ -77,12 +78,12 @@ def test_tpdo_freshness_is_independent(offline):
     late = 1.5 * config.FEEDBACK_TIMEOUT
     inject(c, 1, 3276800, -65536, pos_age=late)
     inject(c, 2, -65536, 123, vel_age=late)
-    inject(c, 4, 8192, -50)
+    inject(c, 5, 8192, -50)
     table = c.status()
     assert cells(table, 1)[2:] == ["0x4637", "TPDO1 STALE", "--", "--", "--", "-0.732 mm/s", "-65536"]
     assert cells(table, 2)[5:] == ["-12.000 mm", "-65536", "--", "TPDO2 STALE"]
     assert cells(table, 3)[2:] == ["----", "TPDO1 STALE", "--", "--", "--", "--", "TPDO2 STALE"]
-    assert cells(table, 4)[5:] == ["180.000 deg", "8192", "-30.000 deg/s", "-50"]
+    assert cells(table, 5)[5:] == ["180.000 deg", "8192", "-30.000 deg/s", "-50"]
 
 
 def test_config_errors_are_local_and_preserve_raw_fields(offline, monkeypatch):
@@ -92,13 +93,13 @@ def test_config_errors_are_local_and_preserve_raw_fields(offline, monkeypatch):
     monkeypatch.setitem(config.MECHANICAL_CONFIG, 3, replace(config.MECHANICAL_CONFIG[3],
                         increments_per_revolution=1, travel_per_revolution=1e308))
     c = offline()
-    for node in (1, 2, 3, 4):
+    for node in (1, 2, 3, 5):
         inject(c, node, 65536, 0)
     table = c.status()
     assert cells(table, 1)[5:] == ["12.000 mm", "65536", "CONV ERROR", "0"]
     assert cells(table, 2)[5:] == ["CONV ERROR", "65536", "CONV ERROR", "0"]
     assert cells(table, 3)[5:] == ["CONV ERROR", "65536", "0.000 mm/s", "0"]
-    assert cells(table, 4)[5:] == ["1440.000 deg", "65536", "0.000 deg/s", "0"]
+    assert cells(table, 5)[5:] == ["1440.000 deg", "65536", "0.000 deg/s", "0"]
     assert "Node 1 Velocity" in table and "velocity_unit='bad'" in table
     assert "Node 2 Position" in table and "direction" in table
     assert "Node 3 Position" in table and "float" in table
@@ -106,7 +107,7 @@ def test_config_errors_are_local_and_preserve_raw_fields(offline, monkeypatch):
 
 def test_status_does_not_hide_programming_errors(offline, monkeypatch):
     c = offline()
-    inject(c, 4, 42, 1)
+    inject(c, 5, 42, 1)
 
     def fail(*args):
         raise RuntimeError("unexpected converter failure")

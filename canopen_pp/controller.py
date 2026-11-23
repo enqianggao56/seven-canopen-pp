@@ -282,7 +282,7 @@ class Controller:
         self.completed_positions = {a.target.command.node_id: a.params.target_position for a in axes}
         if already_in_window:
             self.report("在线节点在触发前已位于本次到位窗口内，本次定位无需位移。")
-        group = "Seven Axis" if len(axes) == 7 else f"{len(axes)} Axis"
+        group = "Eight Axis" if len(axes) == len(config.AXIS_CONFIG) else f"{len(axes)} Axis"
         self.report(f"{group} PP Motion Completed\n\n" + "\n".join(
             f"Node {n}: Completed" for n in self.online_drives)
             + "\n\nAll participating axes remain Operation Enabled.\nReady for next pp-move.")

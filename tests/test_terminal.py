@@ -18,7 +18,7 @@ def test_terminal_before_init(monkeypatch, capsys):
     assert "禁止 enable" in captured.err
     output = captured.out
     assert output.count("CAN 尚未初始化") == 2
-    assert "All 7 axes enabled successfully" not in output
+    assert "使能成功" not in output
 
 
 def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, capsys):
@@ -31,7 +31,7 @@ def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, caps
     repaired = json.loads(CONFIG_PATH.read_text())
     repaired["axes"]["1"]["position"] = 100
     path.write_text("{}")
-    controller = Mock(online_nodes=range(1, 8))
+    controller = Mock(online_nodes=range(1, 9))
     connect = Mock(return_value=controller)
     monkeypatch.setattr(terminal, "CONFIG_PATH", path)
     monkeypatch.setattr(terminal, "open_controller", connect)
@@ -53,4 +53,4 @@ def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, caps
     controller.close.assert_called_once()
     controller.move_test.assert_called_once()
     targets, = controller.move_test.call_args.args
-    assert len(targets.axes) == 7 and targets.axes[0].command.target_position == 100
+    assert len(targets.axes) == 8 and targets.axes[0].command.target_position == 100

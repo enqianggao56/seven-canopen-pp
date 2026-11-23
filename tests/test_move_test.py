@@ -8,7 +8,7 @@ from canopen_pp import config
 from canopen_pp.drives import ControlError
 from canopen_pp.pp import PPCommand
 from canopen_pp.pp_config import AxisTarget, PPTargets, load_targets
-from test_virtual import system  # reuse the seven LocalNodes and the independent virtual listener
+from test_virtual import system  # reuse the eight LocalNodes and the independent virtual listener
 
 
 @pytest.fixture(autouse=True)
@@ -20,17 +20,19 @@ def test_batch_on_virtual_bus(system, monkeypatch):
     c, sims, trace, log = system
     c.initialize()
     # Fixed inputs for the wire values below, independent of the operator's JSON.
-    profiles = ((100, 5, 10, 10), (100, 5, 10, 10), (50, 5, 10, 10), (-45, 60, 12, 3),
+    profiles = ((100, 5, 10, 10), (100, 5, 10, 10), (50, 5, 10, 10), (-3, 1, 2, 2),
+                (-45, 60, 12, 3),
                 (5, 5, 10, 10), (5, 5, 10, 10), (1, 1, 2, 2))
     targets = PPTargets("wire test", tuple(
-        AxisTarget(PPCommand(n, *profile), 100 if n >= 4 else None)
+        AxisTarget(PPCommand(n, *profile), 100 if n >= 5 else None)
         for n, profile in enumerate(profiles, 1)))
     expected = [(546133, 447392, 894, 894), (546133, 447392, 894, 894),
-                (344926, 565127, 1130, 1130), (-2048, 100, 20, 5), (228, 8, 16, 16),
+                (344926, 565127, 1130, 1130), (-65536, 357913, 715, 715),
+                (-2048, 100, 20, 5), (228, 8, 16, 16),
                 (228, 8, 16, 16), (8192, 300, 600, 600)]
     wire = [(0x201+i, struct.pack("<iI", pos, vel)) for i, (pos, vel, _, _) in enumerate(expected)]
     wire += [(0x301+i, struct.pack("<II", acc, dec)) for i, (_, _, acc, dec) in enumerate(expected)]
-    wire += [(0x400+n, bytes.fromhex("00 00 01" if n <= 3 else "01 00 01 00 00")) for n in sims]
+    wire += [(0x400+n, bytes.fromhex("00 00 01" if n <= 4 else "01 00 01 00 00")) for n in sims]
     batch = c.clock.batch
     receipts = []
 
@@ -50,12 +52,12 @@ def test_batch_on_virtual_bus(system, monkeypatch):
         stamps = [stamp for _, stamp in echoes]
         assert stamps == sorted(stamps) and stamps[0] > 0
     for start in [i for i, frame in enumerate(trace) if frame == wire[0]]:
-        assert trace[start:start+22] == wire + [(0x80, b"")]
+        assert trace[start:start+len(wire)+1] == wire + [(0x80, b"")]
     assert [frame for frame in trace if frame[0] != 0x80] == wire * 2
     assert trace[-2:] == [(0x80, b"")] * 2
     assert all(s.word == 0x40 for s in sims.values())
     for report in log:
-        assert "Total RPDO: 21" in report and "SYNC Frames: 1" in report
+        assert "Total RPDO: 24" in report and "SYNC Frames: 1" in report
         assert "Configured Torque: 100 ‰" in report and "RPDO3 Torque: 0" in report
         assert "SocketCAN capture review: manual (candump log)" in report
         assert "Result: TRANSMISSION COMPLETED" in report
@@ -68,13 +70,13 @@ def test_init_required_and_enable_blocked(system):
     c.initialize()
     with pytest.raises(ControlError, match="禁止 enable"):
         c.enable()
-    assert not any(0x201 <= cob <= 0x407 for cob, _ in trace)
+    assert not any(0x201 <= cob <= 0x408 for cob, _ in trace)
 
 
 def test_test_mode_init_requires_disabled(system):
     c, sims, _, _ = system
-    sims[7].word = 0x17
-    with pytest.raises(ControlError, match="Node 7.*Quick Stop"):
+    sims[8].word = 0x17
+    with pytest.raises(ControlError, match="Node 8.*Quick Stop"):
         c.initialize()
     assert not c.initialized
 
@@ -88,14 +90,14 @@ def test_preflight_sends_no_rpdo(system, fault, monkeypatch):
         last = targets.axes[-1]
         targets = replace(targets, axes=(*targets.axes[:-1], replace(last, torque_per_mille=0)))
     elif fault == "state":
-        sims[4].word = 0x23
+        sims[5].word = 0x23
         sleep(c.clock.period * 2)
     elif fault.startswith("stale"):
         # Silence just the requested TPDO at its source.
         index = 3 if fault == "stale TPDO1" else 4
-        mapped = sims[4].mapped
-        monkeypatch.setattr(sims[4], "mapped", lambda slot: slot != sims[4].slots[index] and mapped(slot))
-        sleep(.25)
+        mapped = sims[5].mapped
+        monkeypatch.setattr(sims[5], "mapped", lambda slot: slot != sims[5].slots[index] and mapped(slot))
+        sleep(config.FEEDBACK_TIMEOUT + c.clock.period)
     else:
         original = c.clock.batch
 
@@ -109,13 +111,13 @@ def test_preflight_sends_no_rpdo(system, fault, monkeypatch):
         monkeypatch.setattr(c.clock, "batch", changed_after_preflight)
     with pytest.raises(ControlError):
         c.move_test(targets)
-    assert not any(0x201 <= cob <= 0x407 for cob, _ in trace)
+    assert not any(0x201 <= cob <= 0x408 for cob, _ in trace)
     assert not any("TRANSMISSION COMPLETED" in line for line in log)
     if fault.startswith("stale"):
-        monkeypatch.setattr(sims[4], "mapped", mapped)
+        monkeypatch.setattr(sims[5], "mapped", mapped)
 
 
-@pytest.mark.parametrize("failed_id,count", [(0x304, 10), (0x80, 21)])
+@pytest.mark.parametrize("failed_id,count", [(0x305, 12), (0x80, 24)])
 def test_partial_batch_inhibits_sync_and_close_recovers(system, monkeypatch, failed_id, count):
     c, _, trace, log = system
     c.initialize()
@@ -140,7 +142,7 @@ def test_partial_batch_inhibits_sync_and_close_recovers(system, monkeypatch, fai
     assert f"Total RPDO: {count}" in log[-1] and "SYNC Frames: 0" in log[-1]
     assert "Result: FAILED" in log[-1]
     c.close()
-    assert [cob for cob, _ in trace[cut+count:]][:8] == list(range(0x401, 0x408)) + [0x80]
+    assert [cob for cob, _ in trace[cut+count:]][:9] == list(range(0x401, 0x409)) + [0x80]
 
 
 def test_fault_in_batch_cycle_fails_even_with_all_echoes(system, monkeypatch):
@@ -149,17 +151,17 @@ def test_fault_in_batch_cycle_fails_even_with_all_echoes(system, monkeypatch):
     original = c.bus.transmit
 
     def transmit(cob, data, **kwargs):
-        if cob == 0x407:
-            sims[4].word = 8
+        if cob == 0x408:
+            sims[5].word = 8
         return original(cob, data, **kwargs)
 
     with monkeypatch.context() as m:
         m.setattr(c.bus, "transmit", transmit)
-        with pytest.raises(ControlError, match="Node 4.*Fault"):
+        with pytest.raises(ControlError, match="Node 5.*Fault"):
             c.move_test(load_targets())
-    assert "Total RPDO: 21" in log[-1] and "SYNC Frames: 1" in log[-1]
+    assert "Total RPDO: 24" in log[-1] and "SYNC Frames: 1" in log[-1]
     assert "Result: FAILED" in log[-1]
-    sims[4].word = 0x40
+    sims[5].word = 0x40
 
 
 def test_missing_batch_tpdo2_cannot_be_confirmed_by_a_later_cycle(system, monkeypatch):
@@ -174,7 +176,7 @@ def test_missing_batch_tpdo2_cannot_be_confirmed_by_a_later_cycle(system, monkey
         if cob == 0x201:
             batch_started = True
         if batch_started and cob == 0x80:
-            sims[4].send_velocity = skipped
+            sims[5].send_velocity = skipped
             skipped = True
         return original(cob, data, **kwargs)
 

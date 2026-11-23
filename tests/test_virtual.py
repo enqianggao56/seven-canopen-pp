@@ -1,4 +1,4 @@
-"""Real python-can virtual transport and seven LocalNode SDO servers; no physical I/O."""
+"""Real python-can virtual transport and eight LocalNode SDO servers; no physical I/O."""
 import struct
 from time import sleep
 from uuid import uuid4
@@ -54,7 +54,7 @@ class SimDrive:
             self.target_position = self.pending_position
             self.pending_position = None
         if self.pending is not None and self.mapped(self.slots[2]):
-            if self.n >= 4:
+            if self.n >= 5:
                 cw, mode, torque = struct.unpack("<Hbh", self.pending)
                 self.node.set_data(0x6071, 0, struct.pack("<h", torque))
             else:
@@ -93,7 +93,6 @@ def regular_mode(monkeypatch):
 @pytest.fixture
 def system(monkeypatch, request):
     monkeypatch.setattr(config, "TRANSITION_TIMEOUT", .45)
-    monkeypatch.setattr(config, "FEEDBACK_TIMEOUT", .20)
     settings = dict(interface="virtual", channel=str(uuid4()), bitrate=1000000)
     devices = canopen.Network()
     devices.NOTIFIER_CYCLE = .02
@@ -106,7 +105,7 @@ def system(monkeypatch, request):
     devices.connect(**settings)
     bus = Adapter(drives, settings)
     log = []
-    c = Controller(bus, drives, 35, log.append)
+    c = Controller(bus, drives, config.CAN_CONFIG["sync_period_ms"], log.append)
     try:
         yield c, sims, trace, log
     finally:
@@ -128,7 +127,7 @@ def test_full_wire_sequence(system):
     c.initialize()
     assert not any(s.frames for s in sims.values())
     c.enable()
-    for n in range(4, 8):
+    for n in range(5, 9):
         assert sims[n].node.get_data(0x6071, 0) == bytes.fromhex("64 00")
     c.disable()
     c.enable()
@@ -144,16 +143,16 @@ def test_full_wire_sequence(system):
             assert index not in (0x1005, 0x1006, 0x1016, 0x1017, 0x6040, 0x6060,
                                  0x6071, 0x607A, 0x6081, 0x6083, 0x6084)
     assert all(cob < 0x600 for cob, _ in trace[cut:])
-    assert all(not 0x201 <= cob <= 0x307 for cob, _ in trace)
+    assert all(not 0x201 <= cob <= 0x308 for cob, _ in trace)
     for i, (cob, data) in enumerate(trace):
-        if 0x401 <= cob <= 0x407:
+        if 0x401 <= cob <= 0x408:
             assert data[:3] == bytes((data[0], 0, 1))
-            if cob <= 0x403:
+            if cob <= 0x404:
                 assert len(data) == 3
             else:
                 assert data[3:] == (bytes(2) if data[0] == 1 else bytes.fromhex("64 00"))
         if cob == 0x401:
-            assert [item[0] for item in trace[i:i+8]] == [0x400+n for n in sims]+[0x80]
+            assert [item[0] for item in trace[i:i+len(sims)+1]] == [0x400+n for n in sims]+[0x80]
     assert all([cw for cw, _, _ in s.frames] == [6, 7, 15, s.drive.disable_word]*2
                for s in sims.values())
     assert all(mode == 1 for s in sims.values() for _, mode, _ in s.frames)
@@ -167,20 +166,20 @@ def test_failure_rolls_back(system, failure):
     c, sims, _, log = system
     c.initialize()
     if failure == "stage":
-        sims[4].ignore.add(7)
+        sims[5].ignore.add(7)
     elif failure == "mode":
-        sims[4].mode_ok = False
+        sims[5].mode_ok = False
     elif failure == "fault":
-        sims[4].word = 8
-        sleep(.08)
+        sims[5].word = 8
+        sleep(2 * c.clock.period)
     else:
-        sims[4].send_velocity = False
-        sleep(.25)
-    with pytest.raises(ControlError, match="4"):
+        sims[5].send_velocity = False
+        sleep(config.FEEDBACK_TIMEOUT + c.clock.period)
+    with pytest.raises(ControlError, match="5"):
         c.enable()
     if failure == "fault":
-        assert sims[4].word == 8 and any("Disable not confirmed" in msg for msg in log)
-        sims[4].word = 0x40  # emulate operator clearing the fault before fixture teardown
+        assert sims[5].word == 8 and any("Disable not confirmed" in msg for msg in log)
+        sims[5].word = 0x40  # emulate operator clearing the fault before fixture teardown
     assert all(s.word == 0x40 for s in sims.values())
     assert any("回退前" in line and "0x" in line for line in log)
     if failure != "mode":
@@ -189,15 +188,15 @@ def test_failure_rolls_back(system, failure):
 
 def test_quickstop_disable_timeout_and_retry(system):
     c, sims, _, _ = system
-    sims[4].word = 0x17
+    sims[5].word = 0x17
     c.initialize()
     c.enable()
-    assert sims[4].frames[0][0] == 1
-    sims[4].ignore.add(1)
+    assert sims[5].frames[0][0] == 1
+    sims[5].ignore.add(1)
     with pytest.raises(ControlError, match="Disable not confirmed"):
         c.disable()
     assert "Operation Enabled" in c.status()
-    sims[4].ignore.clear()
+    sims[5].ignore.clear()
     c.disable()
 
 
@@ -206,7 +205,7 @@ def test_rejected_mapping_never_starts_nmt_or_sync(system):
     def reject(index, subindex, **kwargs):
         if (index, subindex) == (0x1602, 3):
             raise canopen.SdoAbortedError(0x06040041)
-    sims[4].node.add_write_callback(reject)
+    sims[5].node.add_write_callback(reject)
     with pytest.raises(ControlError, match="06040041"):
         c.initialize()
     assert not any(cob == 0x80 or (cob == 0 and data[0] == 1) for cob, data in trace)
@@ -214,13 +213,13 @@ def test_rejected_mapping_never_starts_nmt_or_sync(system):
 
 def test_robstride_torque_has_one_active_rpdo(system):
     c, sims, _, _ = system
-    node = sims[5].node
-    node.set_data(0x1403, 1, struct.pack("<I", 0x505))
+    node = sims[6].node
+    node.set_data(0x1403, 1, struct.pack("<I", 0x506))
     node.set_data(0x1603, 0, bytes([1]))
     node.set_data(0x1603, 1, struct.pack("<I", 0x60710010))
     c.initialize()
-    assert int.from_bytes(node.get_data(0x1403, 1), "little") == 0x80000505
-    assert sims[5].mapped(sims[5].slots[2])
+    assert int.from_bytes(node.get_data(0x1403, 1), "little") == 0x80000506
+    assert sims[6].mapped(sims[6].slots[2])
 
 
 def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
@@ -229,7 +228,7 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
     original = c.bus.transmit
 
     def fail_once(cob, data, **kw):
-        if cob == 0x404 and data == bytes.fromhex("0F 00 01 64 00"):
+        if cob == 0x405 and data == bytes.fromhex("0F 00 01 64 00"):
             raise ControlError("injected CAN TX failure")
         return original(cob, data, **kw)
 
@@ -238,7 +237,7 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
         c.enable()
     cut = trace.index((0x401, bytes((15, 0, 1))))
     ids = [cob for cob, _ in trace[cut:]]
-    assert ids[:ids.index(0x80)] == [0x401, 0x402, 0x403] + list(range(0x401, 0x408))
+    assert ids[:ids.index(0x80)] == list(range(0x401, 0x405)) + list(range(0x401, 0x409))
     assert all(15 not in [cw for cw, _, _ in s.frames] and s.word == 0x40 for s in sims.values())
     assert any("Switch On Disabled" in msg for msg in log)
 
@@ -247,8 +246,8 @@ def test_final_verification_catches_lost_mapping(system):
     c, sims, trace, _ = system
     def corrupt_peer(index, subindex, data, **kwargs):
         if index == 0x1602 and subindex == 0 and data[0] == 3:
-            sims[4].node.set_data(0x1602, 3, struct.pack("<I", 0x60400010))
-    sims[7].node.add_write_callback(corrupt_peer)
-    with pytest.raises(ControlError, match="Node 4 1602:03"):
+            sims[5].node.set_data(0x1602, 3, struct.pack("<I", 0x60400010))
+    sims[8].node.add_write_callback(corrupt_peer)
+    with pytest.raises(ControlError, match="Node 5 1602:03"):
         c.initialize()
     assert not any(cob == 0x80 or (cob == 0 and data[0] == 1) for cob, data in trace)

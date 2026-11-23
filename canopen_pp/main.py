@@ -34,7 +34,7 @@ def connect(axes, settings, report=print):
 def main():
     controller = None
     result = 0
-    print("=" * 40 + "\nSeven Axis CANopen PP Controller\n" + "=" * 40)
+    print("=" * 40 + "\nEight Axis CANopen PP Controller\n" + "=" * 40)
     mode = "PARAMETER TEST ONLY" if config.PARAMETER_TEST_ONLY else "CiA 402"
     print(f"\nMode: {mode}\nConfiguration: config/pp_targets.json")
     if not config.PARAMETER_TEST_ONLY:

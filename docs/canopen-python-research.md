@@ -1,6 +1,6 @@
 # Python CANopen 伺服 PP 源码调研
 
-> 历史调研，记录早期 PP 运动原型。当前同步 PDO 使能终端的协议、命令和实机记录见[项目说明](../README.md)。下文的 SDO 使能和位置运动流程属于上一阶段。
+> 历史调研，记录原七轴编号下的早期 PP 运动原型。当前八轴同步 PDO 终端的协议、命令和实机记录见[项目说明](../README.md)。下文的 SDO 使能和位置运动流程属于上一阶段。
 
 最值得对照的三份代码是本项目已经使用的 canopen-python、带有 maxon 和 FAULHABER 驱动适配的 Being，以及 Analog Devices 的 PyTrinamic 单轴 PP 示例。以下源码链接固定到实际阅读的版本。三个项目分别展示了协议接口、伺服应用和 PDO 触发，本次检索未找到覆盖这套 Kinco iSMD、RS06、RS00 和 EL05 七节点组合的完整 Python 实现。
 

@@ -130,6 +130,7 @@ class PPMotion:
             return (reached_flag_ok(n, s.word) and ack_matches(n, s.word, expected=False)
                     and self.error_distance(n, s) <= self.position_tolerances[n])
 
-        self.wait("七轴到位" if len(self.axes) == 7 else "在线节点到位", cleared, arrival_deadline, arrived, cycles=2)
+        stage = "八轴到位" if len(self.axes) == len(config.AXIS_CONFIG) else "在线节点到位"
+        self.wait(stage, cleared, arrival_deadline, arrived, cycles=2)
         return all(self.error_distance(n, s) <= self.position_tolerances[n]
                    for n, s in baseline.items())

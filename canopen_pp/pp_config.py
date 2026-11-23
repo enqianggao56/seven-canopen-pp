@@ -1,14 +1,14 @@
-"""Read and validate the immutable seven-axis absolute PP target set offline."""
+"""Read and validate the immutable eight-axis absolute PP target set offline."""
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import PP_DESIGN_LIMITS
+from .config import AXIS_CONFIG, PP_DESIGN_LIMITS
 from .mechanical import MechanicalConverter
 from .pp import PPCommand, PPEncoder, PPParameters
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config/pp_targets.json"
-NODES = tuple(range(1, 8))
+NODES = tuple(sorted(AXIS_CONFIG))
 RATES = ("velocity", "acceleration", "deceleration")
 
 
@@ -27,9 +27,9 @@ class AxisTarget:
             if type(value) not in (int, float) or not 0 < value <= limit:
                 raise ValueError(f"Node {n} 的 {field} 必须为 (0, {limit}] 内的数值")
         torque = self.torque_per_mille
-        if n >= 4 and (type(torque) is not int or not 1 <= torque <= 1000):
+        if n >= 5 and (type(torque) is not int or not 1 <= torque <= 1000):
             raise ValueError(f"Node {n} torque_per_mille 必须为 1–1000 的整数")
-        if n < 4 and torque is not None:
+        if n < 5 and torque is not None:
             raise ValueError(f"Node {n} 不支持 torque_per_mille")
         return encoder.encode(cmd)
 
@@ -41,7 +41,7 @@ class PPTargets:
 
     def selected(self, nodes):
         if tuple(axis.command.node_id for axis in self.axes) != NODES:
-            raise ValueError("需要按顺序提供完整配置 Node 1–7")
+            raise ValueError("需要按顺序提供完整配置 Node 1–8")
         nodes = frozenset(nodes)
         unknown = nodes.difference(NODES)
         if unknown:
@@ -80,7 +80,7 @@ def load_targets(path: Path = CONFIG_PATH, *, nodes=NODES) -> PPTargets:
     for n in NODES:
         row = doc["axes"][str(n)]
         fields = {"position", *RATES}
-        if n >= 4:
+        if n >= 5:
             fields.add("torque_per_mille")
         _fields(row, fields, f"Node {n}")
         cmd = PPCommand(n, row["position"], row["velocity"], row["acceleration"], row["deceleration"])

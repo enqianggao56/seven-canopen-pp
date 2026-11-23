@@ -20,24 +20,26 @@ def test_state(word, name):
 def test_layout_and_flags():
     for n, drive in make_drives(config.AXIS_CONFIG).items():
         rp1, rp2, rp3, tp1, tp2 = slots(drive)
+        assert [slot.cob for slot in (rp1, rp2, rp3, tp1, tp2)] == [
+            base + n for base in (0x200, 0x300, 0x400, 0x180, 0x280)]
         assert rp1.words == (0x607A0020, 0x60810020)
         assert rp2.words == (0x60830020, 0x60840020)
         control = (0x60400010, 0x60600008)
-        assert rp3.words == (control if n < 4 else control + (0x60710010,))
-        assert tp1.words == (0x60410010, 0x60630020 if n < 4 else 0x60640020, 0x60610008)
+        assert rp3.words == (control if n < 5 else control + (0x60710010,))
+        assert tp1.words == (0x60410010, 0x60630020 if n < 5 else 0x60640020, 0x60610008)
         assert tp2.words == (0x606C0020,)
-        assert [struct.calcsize(s.fmt) for s in slots(drive)] == [8, 8, 3 if n < 4 else 5, 7, 4]
+        assert [struct.calcsize(s.fmt) for s in slots(drive)] == [8, 8, 3 if n < 5 else 5, 7, 4]
         assert desired_cob(0xC0000000, tp1) == 0x40000180 + n
 
 
 def test_configured_torque_per_axis():
     drives = make_drives(config.AXIS_CONFIG)
-    assert drives[5].control_data(6, 250) == bytes.fromhex("06 00 01 FA 00")
-    assert drives[4].control_data(6, 100) == bytes.fromhex("06 00 01 64 00")
-    assert drives[5].control_data(1) == bytes.fromhex("01 00 01 00 00")
+    assert drives[6].control_data(6, 250) == bytes.fromhex("06 00 01 FA 00")
+    assert drives[5].control_data(6, 100) == bytes.fromhex("06 00 01 64 00")
+    assert drives[6].control_data(1) == bytes.fromhex("01 00 01 00 00")
     for value in (None, -1, 0, 1001, 20.5, True):
-        with pytest.raises(ControlError, match="Node 5"):
-            drives[5].control_data(6, value)
+        with pytest.raises(ControlError, match="Node 6"):
+            drives[6].control_data(6, value)
 
 
 def test_invalid_lengths_and_cycle_barrier():

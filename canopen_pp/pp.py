@@ -60,7 +60,7 @@ class PPEncoder:
     def encode(self, command: PPCommand) -> PPParameters:
         node = command.node_id
         if isinstance(node, bool) or not isinstance(node, int) or node not in PP_DESIGN_LIMITS:
-            raise UnknownAxisError("PP 命令的 Node ID 必须为 1–7 的整数")
+            raise UnknownAxisError("PP 命令的 Node ID 必须为 1–8 的整数")
         cfg = self.converter.get_config(node)
         installed = MECHANICAL_CONFIG[node]
         if (cfg.device_type != installed.device_type or cfg.unit != installed.unit

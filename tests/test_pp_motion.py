@@ -22,7 +22,7 @@ def motion_system(system, monkeypatch, tmp_path):
     doc = json.loads(CONFIG_PATH.read_text())
     for n, sim in sims.items():
         sim.pos = sim.vel = 0
-        doc["axes"][str(n)]["position"] = .1 if n == 7 else .5
+        doc["axes"][str(n)]["position"] = .1 if n == 8 else .5
     path.write_text(json.dumps(doc))
     return controller, sims, trace, log, path
 
@@ -30,7 +30,7 @@ def motion_system(system, monkeypatch, tmp_path):
 def rpdo_batches(trace):
     batches, pending = [], []
     for cob, data in trace:
-        if 0x200 < cob < 0x408:
+        if 0x200 < cob <= 0x408:
             pending.append((cob, data))
         if cob == 0x80 and pending:
             batches.append(pending)
@@ -80,7 +80,7 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
         assert path.read_text() == "{"
         yield "status"
         verify_move(rpdo_batches(trace), first)
-        assert c.status().count("Operation Enabled") == 7
+        assert c.status().count("Operation Enabled") == 8
         assert all(s.word & 0x1400 == 0x0400 for s in sims.values())
         trace.clear()
         path.unlink()
@@ -91,20 +91,20 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
         path.write_text(json.dumps(doc))
         yield "pp-move"
         doc["axes"]["2"]["position"] = .5
-        doc["axes"]["5"]["torque_per_mille"] = 1001
+        doc["axes"]["6"]["torque_per_mille"] = 1001
         path.write_text(json.dumps(doc))
         yield "pp-move"
-        doc["axes"]["5"]["torque_per_mille"] = 100
+        doc["axes"]["6"]["torque_per_mille"] = 100
         for field in ("velocity", "acceleration", "deceleration"):
-            old = doc["axes"]["6"][field]
-            doc["axes"]["6"][field] = 721  # beyond the axis design limit
+            old = doc["axes"]["7"][field]
+            doc["axes"]["7"][field] = 721  # beyond the axis design limit
             path.write_text(json.dumps(doc))
             yield "pp-move"
-            doc["axes"]["6"][field] = old
+            doc["axes"]["7"][field] = old
         assert rpdo_batches(trace) == []
-        assert c.status().count("Operation Enabled") == 7
-        # Every axis exceeds its former commissioning caps within its design range.
-        positions = [100, 100, 50, -5, 5, 5, 1]
+        assert c.status().count("Operation Enabled") == 8
+        # Change the targets and profiles together while staying within the design limits.
+        positions = [100, 100, 50, -3, -5, 5, 5, 1]
         for n, row in doc["axes"].items():
             row.update(position=positions[int(n) - 1], velocity=8,
                        acceleration=12, deceleration=13)
@@ -116,7 +116,7 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
         verify_move(rpdo_batches(trace), second)
         assert first != second
         yield "status"
-        assert c.status().count("Operation Enabled") == 7
+        assert c.status().count("Operation Enabled") == 8
         trace.clear()
         yield "pp-move"  # already at target, still leaves a clean handshake
         verify_move(rpdo_batches(trace), second)
@@ -129,17 +129,17 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
     monkeypatch.setattr("builtins.input", lambda _: next(script))
     assert terminal.main() == 0
     assert capsys.readouterr().err.count("pp-move 失败") == 7
-    assert sum("Seven Axis PP Motion Completed" in line for line in log) == 3
+    assert sum("Eight Axis PP Motion Completed" in line for line in log) == 3
 
 
 @pytest.mark.parametrize("ack_bit", [0, 1 << 12])
-def test_repeated_moves_without_reached_flag_on_nodes_4_to_7(motion_system, monkeypatch, ack_bit):
+def test_repeated_moves_without_reached_flag_on_nodes_5_to_8(motion_system, monkeypatch, ack_bit):
     c, sims, trace, _, path = motion_system
-    network = sims[4].node.network
+    network = sims[5].node.network
     send = network.send_message
 
     def send_feedback(cob, data, *args, **kwargs):
-        if 0x184 <= cob <= 0x187:
+        if 0x185 <= cob <= 0x188:
             word, pos, mode = struct.unpack("<Hib", data)
             data = struct.pack("<Hib", (word & ~0x1400) | ack_bit, pos, mode)
         return send(cob, data, *args, **kwargs)
@@ -149,14 +149,14 @@ def test_repeated_moves_without_reached_flag_on_nodes_4_to_7(motion_system, monk
     c.enable(load_targets(path))
     doc = json.loads(path.read_text())
     for position in (.5, 1):
-        doc["axes"]["4"]["position"] = position
+        doc["axes"]["5"]["position"] = position
         path.write_text(json.dumps(doc))
         targets = load_targets(path)
         trace.clear()
         c.pp_move(targets)
         verify_move(rpdo_batches(trace), targets)
         samples = c.feedback.snapshot()
-        assert all(samples[n].word & 0x1400 == ack_bit for n in range(4, 8))
+        assert all(samples[n].word & 0x1400 == ack_bit for n in range(5, 9))
 
 
 @pytest.mark.parametrize("failure", ["partial_ack", "old_ack", "stuck_ack", "old_reached",
@@ -168,10 +168,10 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
     c.enable(load_targets(path))
     c.pp_move(load_targets(path))
     doc = json.loads(path.read_text())
-    doc["axes"]["5"]["position"] = 1
+    doc["axes"]["6"]["position"] = 1
     path.write_text(json.dumps(doc))
     trace.clear()
-    sim = sims[2] if failure in ("partial_ack", "old_ack", "stuck_ack", "lost_hold", "no_reached") else sims[5]
+    sim = sims[4] if failure in ("partial_ack", "old_ack", "stuck_ack", "lost_hold", "no_reached") else sims[6]
     if failure == "partial_ack":
         sim.ignore.add(31)
     elif failure == "old_ack":
@@ -181,7 +181,7 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
         sim.word &= ~0x0400
         sleep(2 * c.clock.period)
     elif failure == "lost_position":
-        sim.pos += 100  # node 5 moved outside the previous target's position window
+        sim.pos += 100  # node 6 moved outside the previous target's position window
         sleep(2 * c.clock.period)
     elif failure == "stuck_ack":
         sim.ignore.add(15)
@@ -191,7 +191,7 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
         original = c.bus.transmit
 
         def inject(cob, data, **kwargs):
-            if cob == 0x405 and data[0] == 31:
+            if cob == 0x406 and data[0] == 31:
                 if failure == "following_error":
                     sim.word |= 1 << 13
                 elif failure == "mode":
@@ -215,9 +215,9 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
     elif failure == "stuck_ack":
         assert "设定点 ACK=0 超时" in str(error.value)
     elif failure == "no_reached":
-        assert "七轴到位 超时" in str(error.value)
+        assert "八轴到位 超时" in str(error.value)
     assert c.pp_inhibited
-    assert sum("Seven Axis PP Motion Completed" in line for line in log) == 1
+    assert sum("Eight Axis PP Motion Completed" in line for line in log) == 1
     triggers = [data for cob, data in trace if cob == 0x401 and data[0] == 31]
     assert len(triggers) == (0 if failure in ("old_ack", "lost_hold", "lost_position") else 1)
     if failure == "partial_tx":
@@ -244,7 +244,7 @@ def test_missing_load_cycle_prevents_trigger(motion_system, monkeypatch):
         if cob == 0x201:
             loading = True
         if cob == 0x80:
-            sims[7].send_velocity = not loading
+            sims[8].send_velocity = not loading
             loading = False
         return original(cob, data, **kwargs)
 
@@ -258,7 +258,7 @@ def test_missing_load_cycle_prevents_trigger(motion_system, monkeypatch):
 
 def test_motion_with_nonzero_velocity_feedback_can_outlast_enable_timeout(motion_system, monkeypatch):
     c, sims, _, log, path = motion_system
-    axis = sims[4]
+    axis = sims[5]
     axis.vel = -12  # Report -7.2 deg/s before the trigger and throughout arrival.
     c.initialize()
     c.enable(load_targets(path))
@@ -267,7 +267,7 @@ def test_motion_with_nonzero_velocity_feedback_can_outlast_enable_timeout(motion
 
     def delay_arrival(cob, data, **kwargs):
         nonlocal cycles
-        if cob == 0x404 and data[0] == 31:
+        if cob == 0x405 and data[0] == 31:
             axis.follow_target = False
             cycles = 1
         if cob == 0x80 and cycles:
@@ -280,5 +280,5 @@ def test_motion_with_nonzero_velocity_feedback_can_outlast_enable_timeout(motion
     monkeypatch.setattr(c.bus, "transmit", delay_arrival)
     c.pp_move(load_targets(path))
     assert cycles >= 20 and 18 * c.clock.period > config.TRANSITION_TIMEOUT
-    assert c.feedback.snapshot()[4].vel == -12
-    assert any("Seven Axis PP Motion Completed" in line for line in log)
+    assert c.feedback.snapshot()[5].vel == -12
+    assert any("Eight Axis PP Motion Completed" in line for line in log)
