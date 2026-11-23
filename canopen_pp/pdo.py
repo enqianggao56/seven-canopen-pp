@@ -5,6 +5,7 @@ from time import monotonic, time
 
 from canopen import SdoAbortedError
 
+from .communication import SdoTimeout
 from .drives import ControlError
 
 
@@ -33,34 +34,32 @@ def slots(drive):
     )
 
 
-def check_unused_slots(bus, drives):
-    used = {slot.cob for d in drives.values() for slot in slots(d)}
-    for n, drive in drives.items():
-        od = bus.nodes[n].object_dictionary
-        control_objects = {index << 8 for index, _ in drive.control_fields}
-        for index in sorted(i for i in od if 0x1403 <= i < 0x1600 or 0x1802 <= i < 0x1a00):
-            try:
-                cob = bus.read(n, index, 1)
-            except ControlError as exc:
-                abort = exc.__cause__
-                if isinstance(abort, SdoAbortedError) and abort.code in (0x06020000, 0x06090011):
-                    continue  # optional PDO absent on this firmware
-                raise
-            if cob & 0x80000000:
-                continue
-            wire_id = cob & ~0x40000000  # preserve the standard/extended frame flag
-            if wire_id in used:
-                raise ControlError(f"Node {n} 额外 PDO {index:04X} 与目标 COB-ID {cob:#x} 冲突")
-            if index >= 0x1800:
-                continue
-            mapping = index + 0x200
-            count = bus.read(n, mapping)
-            for sub in range(1, count + 1):
-                word = bus.read(n, mapping, sub)
-                if word >> 8 in control_objects:
-                    # Keep one active RPDO route for each RPDO3 field.
-                    bus.set(n, index, cob | 0x80000000, 1)
-                    break
+def check_unused_slots(bus, n, drive, used):
+    od = bus.nodes[n].object_dictionary
+    control_objects = {index << 8 for index, _ in drive.control_fields}
+    for index in sorted(i for i in od if 0x1403 <= i < 0x1600 or 0x1802 <= i < 0x1a00):
+        try:
+            cob = bus.read(n, index, 1)
+        except ControlError as exc:
+            abort = exc.__cause__
+            if isinstance(abort, SdoAbortedError) and abort.code in (0x06020000, 0x06090011):
+                continue  # optional PDO absent on this firmware
+            raise
+        if cob & 0x80000000:
+            continue
+        wire_id = cob & ~0x40000000  # preserve the standard/extended frame flag
+        if wire_id in used:
+            raise ControlError(f"Node {n} 额外 PDO {index:04X} 与目标 COB-ID {cob:#x} 冲突")
+        if index >= 0x1800:
+            continue
+        mapping = index + 0x200
+        count = bus.read(n, mapping)
+        for sub in range(1, count + 1):
+            word = bus.read(n, mapping, sub)
+            if word >> 8 in control_objects:
+                # Keep one active RPDO route for each RPDO3 field.
+                bus.set(n, index, cob | 0x80000000, 1)
+                break
 
 
 def desired_cob(current, slot):
@@ -100,6 +99,8 @@ def configure_slot(bus, n, slot):
             bus.set(n, slot.com, 1, 2)
             bus.set(n, slot.com, desired, 1)
         return desired
+    except SdoTimeout:
+        raise
     except ControlError as exc:
         words = ", ".join(f"{w:08X}" for w in slot.words)
         raise ControlError(f"Node {n} PDO {slot.mapping:04X} [{words}]: {exc}") from exc
@@ -159,6 +160,11 @@ class Feedback:
                     s.tp2, s.received2 = stamp, received
         return update
 
-    def snapshot(self):
+    def reset(self):
         with self.lock:
-            return {n: replace(s) for n, s in self.samples.items()}
+            self.sync_stamp = 0.0
+            self.samples = {n: Sample() for n in self.samples}
+
+    def snapshot(self, nodes=None):
+        with self.lock:
+            return {n: replace(self.samples[n]) for n in (self.samples if nodes is None else nodes)}

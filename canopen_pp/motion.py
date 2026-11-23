@@ -1,4 +1,4 @@
-"""One synchronous seven-axis absolute Profile Position handshake."""
+"""One synchronous absolute Profile Position handshake."""
 from math import isfinite, sqrt
 from time import monotonic, sleep
 
@@ -32,7 +32,7 @@ class PPMotion:
                 raise ControlError(f"Node {n} 到位误差阈值必须为有限正数")
 
     def snapshot(self):
-        samples = self.feedback.snapshot()
+        samples = self.feedback.snapshot(self.axes)
         for n, s in samples.items():
             if not s.fresh(config.FEEDBACK_TIMEOUT):
                 raise ControlError(f"Node {n} TPDO1/TPDO2 反馈失效")
@@ -50,7 +50,7 @@ class PPMotion:
             samples = self.snapshot()
             stamp = self.feedback.sync_stamp
             if exact and stamp > since:
-                raise ControlError(f"{stage} 缺少批次 SYNC 对应周期的完整七轴反馈")
+                raise ControlError(f"{stage} 缺少批次 SYNC 对应周期的完整在线节点反馈")
             pending = []
             for n, s in samples.items():
                 if s.cycle1 != stamp or s.cycle2 != stamp or stamp < since:
@@ -130,6 +130,6 @@ class PPMotion:
             return (reached_flag_ok(n, s.word) and ack_matches(n, s.word, expected=False)
                     and self.error_distance(n, s) <= self.position_tolerances[n])
 
-        self.wait("七轴到位", cleared, arrival_deadline, arrived, cycles=2)
+        self.wait("七轴到位" if len(self.axes) == 7 else "在线节点到位", cleared, arrival_deadline, arrived, cycles=2)
         return all(self.error_distance(n, s) <= self.position_tolerances[n]
                    for n, s in baseline.items())

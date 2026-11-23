@@ -3,19 +3,23 @@ import sys
 
 from . import config
 from .communication import Adapter
-from .controller import Controller
+from .controller import AllNodesOffline, Controller
 from .drives import ControlError, make_drives
 from .pp_config import CONFIG_PATH, load_targets
 
 
-def connect(axes, settings, report=print):
+def open_controller(axes, settings, report=print):
     drives = make_drives(axes)
     bus = Adapter(drives, settings)
     try:
-        controller = Controller(bus, drives, settings["sync_period_ms"], report)
+        return Controller(bus, drives, settings["sync_period_ms"], report)
     except BaseException:
         bus.close()
         raise
+
+
+def connect(axes, settings, report=print):
+    controller = open_controller(axes, settings, report)
     try:
         controller.initialize()
     except BaseException:
@@ -45,10 +49,9 @@ def main():
                     break
                 if cmd == "init":
                     if controller is None:
-                        if set(config.AXIS_CONFIG) != set(range(1, 8)):
-                            raise ControlError("七轴终端需要完整配置 Node 1–7")
-                        controller = connect(config.AXIS_CONFIG, config.CAN_CONFIG)
-                        print(f"初始化完成，SYNC {config.CAN_CONFIG['sync_period_ms']} ms")
+                        controller = open_controller(config.AXIS_CONFIG, config.CAN_CONFIG)
+                    controller.initialize()
+                    print(f"初始化完成，SYNC {config.CAN_CONFIG['sync_period_ms']} ms")
                     print(controller.status())
                 elif cmd in ("enable", "pp-move") and config.PARAMETER_TEST_ONLY:
                     raise ControlError(f"PARAMETER TEST ONLY 模式禁止 {cmd}")
@@ -63,19 +66,26 @@ def main():
                     controller.disable()
                 elif cmd in ("enable", "pp-move", "move-test"):
                     try:
-                        targets = load_targets(CONFIG_PATH)
+                        targets = load_targets(CONFIG_PATH, nodes=controller.online_nodes)
                     except (OSError, ValueError, RecursionError) as exc:
                         raise ControlError(f"配置加载失败: {exc}") from exc
                     if cmd == "pp-move":
-                        print(f"已读取 {CONFIG_PATH}，使用本次七轴定位快照")
+                        print(f"已读取 {CONFIG_PATH}，使用本次在线节点定位参数")
                         controller.pp_move(targets)
                     elif cmd == "move-test":
                         controller.move_test(targets)
                     else:
                         controller.enable(targets)
-                        print("All 7 axes enabled successfully")
+                        print(f"使能成功，在线节点 {list(controller.online_nodes)}")
             except ControlError as exc:
                 print(f"{cmd} 失败: {exc}", file=sys.stderr)
+                if (cmd == "init" and controller is not None and not controller.initialized
+                        and not isinstance(exc, AllNodesOffline)):
+                    try:
+                        controller.close()
+                    except ControlError as close_error:
+                        print(f"关闭 CAN 失败: {close_error}", file=sys.stderr)
+                    controller = None
     except (EOFError, KeyboardInterrupt):
         print()
     finally:

@@ -91,14 +91,15 @@ def regular_mode(monkeypatch):
 
 
 @pytest.fixture
-def system(monkeypatch):
+def system(monkeypatch, request):
     monkeypatch.setattr(config, "TRANSITION_TIMEOUT", .45)
     monkeypatch.setattr(config, "FEEDBACK_TIMEOUT", .20)
     settings = dict(interface="virtual", channel=str(uuid4()), bitrate=1000000)
     devices = canopen.Network()
     devices.NOTIFIER_CYCLE = .02
     drives = make_drives(config.AXIS_CONFIG)
-    sims = {n: SimDrive(devices, d) for n, d in drives.items()}
+    present = getattr(request, "param", drives)
+    sims = {n: SimDrive(devices, drives[n]) for n in present}
     trace = []
     for cob in [0, 0x80] + [base+n for n in drives for base in (0x200, 0x300, 0x400, 0x600)]:
         devices.subscribe(cob, lambda cob, data, stamp: trace.append((cob, bytes(data))))

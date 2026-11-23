@@ -1,10 +1,12 @@
-"""Initialization and synchronous CiA 402 commands. Seven-axis absolute Profile Position motion."""
+"""Initialization and synchronous CiA 402 commands. Absolute Profile Position motion on initialized nodes."""
+from contextlib import contextmanager
+from functools import wraps
 from math import isfinite
-from threading import Lock
+from threading import Lock, RLock
 from time import monotonic, sleep
 
 from . import config
-from .communication import SyncClock
+from .communication import SdoTimeout, SyncClock
 from .drives import ControlError, state
 from .mechanical import MechanicalConversionError, MechanicalConverter
 from .motion import PPMotion
@@ -20,6 +22,22 @@ ENABLED = "Operation Enabled"
 FAULTS = {"Fault", "Fault Reaction Active", "Unknown"}
 
 
+class AllNodesOffline(ControlError):
+    """A completed scan found no responsive node."""
+
+
+def exclusive_command(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
+        if not self.command_lock.acquire(blocking=False):
+            raise ControlError("控制命令正在执行中")
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self.command_lock.release()
+    return run
+
+
 class Controller:
     def __init__(self, bus, drives, period_ms, report=print):
         period = period_ms / 1000
@@ -32,50 +50,98 @@ class Controller:
         self.feedback = Feedback(bus.network, drives)
         self.bus.on_sync = self.feedback.sync
         self.clock = SyncClock(bus, period)
+        self.closed = False
         self.initialized = False
-        self.pp_lock = Lock()
+        self.command_lock = Lock()
+        # A disable can interrupt a motion, but cannot overlap a Pre-operational scan.
+        self.lifecycle_lock = RLock()
+        self.online_drives = {}
+        self.offline_nodes = set()
         self.pp_enabled = False
         self.completed_positions = None
         self.pp_inhibited = False
         self.needs_disable = False
 
+    @property
+    def online_nodes(self):
+        return self.online_drives.keys()
+
+    @contextmanager
+    def _detect_timeout(self, n):
+        try:
+            yield
+        except SdoTimeout as exc:
+            self.bus.check_producers()
+            self.offline_nodes.add(n)
+            self.report(f"警告：Node {n} OFFLINE，{exc}")
+
+    @exclusive_command
     def initialize(self):
-        if self.initialized:
-            return
+        with self.lifecycle_lock:
+            self._initialize()
+
+    def _initialize(self):
+        if self.closed:
+            raise ControlError("CAN 已关闭")
+        if self.pp_enabled or self.needs_disable or self.pp_inhibited:
+            raise ControlError("重新 init 前请先 disable 并确认失能")
+        if self.clock.thread.ident is not None:
+            self.wait_feedback(self.online_nodes, target=DISABLED, both=True, reject_faults=True,
+                               description="重新初始化前失能确认")
+            self.clock.close()
+            self.clock = SyncClock(self.bus, self.clock.period)
+        elif self.bus.operational_started:
+            raise ControlError("NMT Start 未完成，无法确认安全失能")
+        self.initialized = False
+        self.completed_positions = None
+        self.online_drives.clear()
+        self.offline_nodes.clear()
+        self.feedback.reset()
+        self.bus.begin_initialization()
+
         # Passive check before changing the nodes' NMT states.
         sleep(2 * self.clock.period)
         self.bus.check_producers()
-        for n in self.drives:
+        detected = {}
+        for n, drive in self.drives.items():
             self.bus.nmt(n, 0x80)
-        for n, drive in self.drives.items():
-            self.bus.expect(n, 0x1018, drive.vendor, 1)
-            word = self.bus.read(n, 0x6041)
-            if state(word) in {ENABLED, "Fault Reaction Active", "Unknown"}:
-                raise ControlError(f"Node {n} 6041=0x{word:04X} ({state(word)})，停止重映射")
-        check_unused_slots(self.bus, self.drives)
-        verified = []
-        for n, drive in self.drives.items():
-            for slot in slots(drive):
-                desired = configure_slot(self.bus, n, slot)
-                verified.append((n, slot, desired))
-        for n, slot, desired in verified:
-            verify_slot(self.bus, n, slot, desired)
-        for n in self.drives:
+            with self._detect_timeout(n):
+                self.bus.expect(n, 0x1018, drive.vendor, 1)
+                word = self.bus.read(n, 0x6041)
+                if state(word) in FAULTS | {ENABLED}:
+                    raise ControlError(f"Node {n} 6041=0x{word:04X} ({state(word)})，停止重映射")
+                detected[n] = drive
+
+        used = {slot.cob for drive in self.drives.values() for slot in slots(drive)}
+        configured = {}
+        for n, drive in detected.items():
+            with self._detect_timeout(n):
+                check_unused_slots(self.bus, n, drive, used)
+                configured[n] = [(slot, configure_slot(self.bus, n, slot)) for slot in slots(drive)]
+        for n, mappings in configured.items():
+            with self._detect_timeout(n):
+                for slot, desired in mappings:
+                    verify_slot(self.bus, n, slot, desired)
+                self.online_drives[n] = detected[n]
+
+        if not self.online_drives:
+            raise AllNodesOffline("所有配置节点均 OFFLINE，初始化失败")
+        for n in self.online_nodes:
             self.bus.nmt(n, 1)
         self.clock.thread.start()
-        samples = self.wait_feedback(self.drives, description="初始 TPDO1/TPDO2", both=True)
-        if self.parameter_test_only:
-            for n, s in samples.items():
-                if state(s.word) != DISABLED:
-                    raise ControlError(f"Node {n} 初始状态 {state(s.word)}，需要 {DISABLED}")
+        samples = self.wait_feedback(self.online_nodes, description="初始 TPDO1/TPDO2", both=True,
+                                     reject_faults=True)
+        for n, s in samples.items():
+            if self.parameter_test_only and state(s.word) != DISABLED:
+                raise ControlError(f"Node {n} 初始状态 {state(s.word)}，需要 {DISABLED}")
         self.initialized = True
 
     def wait_feedback(self, nodes, *, description, since=0, target=None, pp=False,
-                      both=False, enabling=False, exact_cycle=False):
+                      both=False, reject_faults=False, exact_cycle=False):
         deadline = monotonic() + config.TRANSITION_TIMEOUT
         while True:
             self.clock.check()
-            samples = self.feedback.snapshot()
+            samples = self.feedback.snapshot(nodes)
             pending = []
             cycles = set()
             for n in nodes:
@@ -84,10 +150,10 @@ class Controller:
                 actual = state(s.word)
                 if exact_cycle:
                     if max(s.cycle1, s.cycle2) > since:
-                        raise ControlError("未能在批次 SYNC 对应周期确认七轴 TPDO1/TPDO2")
+                        raise ControlError("未能在批次 SYNC 对应周期确认在线节点 TPDO1/TPDO2")
                     if valid and s.cycle1 == since and actual != target:
                         raise ControlError(f"Node {n} {description}: {actual}, 6041=0x{s.word:04X}")
-                if enabling and valid and s.cycle1 >= since and actual in FAULTS:
+                if reject_faults and valid and s.cycle1 >= since and actual in FAULTS:
                     raise ControlError(f"Node {n} {description}: {actual}, 6041=0x{s.word:04X}")
                 cycles.add(s.cycle1)
                 if (not valid or not s.cycle1 or s.cycle1 < since
@@ -101,7 +167,7 @@ class Controller:
             sleep(min(.005, self.clock.period / 8))
 
     def status(self):
-        rows = [("Node", "Motor", "Statusword", "CiA402 State", "6061",
+        rows = [("Link", "Node", "Motor", "Statusword", "CiA402 State", "6061",
                  "Position", "Raw(inc)", "Velocity", "Vel(raw)")]
         errors = []
 
@@ -117,33 +183,39 @@ class Controller:
         samples = self.feedback.snapshot()
         now = monotonic()
         for n, s in samples.items():
+            if n in self.offline_nodes:
+                rows.append(("OFFLINE", str(n), self.drives[n].axis.family, *("--",) * 7))
+                continue
+            link = "ONLINE" if n in self.online_nodes else "UNCHECKED"
             tp1 = now - s.received1 <= config.FEEDBACK_TIMEOUT
             tp2 = now - s.received2 <= config.FEEDBACK_TIMEOUT
             word = f"0x{s.word:04X}" if s.tp1 else "----"
             name = state(s.word) if tp1 else "TPDO1 STALE"
             position = physical(n, "Position", s.pos, self.mechanical.raw_to_actual, "") if tp1 else "--"
             velocity = physical(n, "Velocity", s.vel, self.mechanical.raw_to_velocity, "/s") if tp2 else "--"
-            rows.append((str(n), self.drives[n].axis.family, word, name, str(s.mode) if tp1 else "--",
+            rows.append((link, str(n), self.drives[n].axis.family, word, name, str(s.mode) if tp1 else "--",
                          position, str(s.pos) if tp1 else "--", velocity, str(s.vel) if tp2 else "TPDO2 STALE"))
         widths = [max(map(len, col)) for col in zip(*rows)]
         lines = ["  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip() for row in rows]
+        for label, nodes in (("ONLINE", self.online_nodes), ("OFFLINE", self.offline_nodes)):
+            lines.append(f"{label}: {', '.join(map(str, sorted(nodes))) or '无'}")
         return "\n".join(lines + errors)
 
     def guard(self, required):
-        for n, s in self.feedback.snapshot().items():
+        for n, s in self.feedback.snapshot(self.online_nodes).items():
             if (not s.fresh(config.FEEDBACK_TIMEOUT) or state(s.word) != required
                     or s.cycle1 != self.feedback.sync_stamp or s.cycle2 != s.cycle1):
                 raise ControlError(f"Node {n} 阶段预检失败，6041=0x{s.word:04X} "
                                    f"({state(s.word)}) 或上一周期 TPDO 不完整")
 
-    def frames(self, nodes, control=None, torques=None):
+    def frames(self, control=None, torques=None):
         frames = []
-        for n in nodes:
-            drive = self.drives[n]
+        for n, drive in self.online_drives.items():
             word = drive.disable_word if control is None else control
             frames.append((0x400+n, drive.control_data(word, torques[n] if torques else None)))
         return frames
 
+    @exclusive_command
     def enable(self, targets=None):
         if self.parameter_test_only:
             raise ControlError("PARAMETER TEST ONLY 模式禁止 enable")
@@ -152,13 +224,13 @@ class Controller:
         if self.pp_inhibited:
             raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
         try:
-            targets = load_targets() if targets is None else targets
-            targets.encode(PPEncoder(self.mechanical))
+            targets = load_targets(nodes=self.online_nodes) if targets is None else targets
+            targets.encode(PPEncoder(self.mechanical), self.online_nodes)
         except (OSError, ValueError) as exc:
             raise ControlError(f"PP 配置错误: {exc}") from exc
-        torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
+        torques = {a.command.node_id: a.torque_per_mille for a in targets.selected(self.online_nodes)}
         try:
-            samples = self.wait_feedback(self.drives, description="使能前反馈", both=True)
+            samples = self.wait_feedback(self.online_nodes, description="使能前反馈", both=True)
             if self.pp_enabled and all(state(s.word) == ENABLED and s.mode == 1 for s in samples.values()):
                 return
             # Normalize mixed powered states, including Quick Stop Active. Never reset faults.
@@ -171,11 +243,11 @@ class Controller:
                 self.needs_disable = True
             previous = DISABLED
             for cw, target in ((6, READY), (7, SWITCHED), (15, ENABLED)):
-                stamp = self.clock.batch(self.frames(self.drives, cw, torques),
+                stamp = self.clock.batch(self.frames(cw, torques),
                                          guard=lambda: self.guard(previous))
-                samples = self.wait_feedback(self.drives, since=stamp, target=target, pp=(cw == 15),
-                                             both=True, enabling=True, description=f"0x{cw:04X} → {target}")
-                words = " ".join(f"N{n}=0x{samples[n].word:04X}" for n in self.drives)
+                samples = self.wait_feedback(self.online_nodes, since=stamp, target=target, pp=(cw == 15),
+                                             both=True, reject_faults=True, description=f"0x{cw:04X} → {target}")
+                words = " ".join(f"N{n}=0x{samples[n].word:04X}" for n in self.online_drives)
                 self.report(f"0x{cw:04X} → {target}  {words}")
                 previous = target
             self.pp_enabled = True
@@ -184,6 +256,7 @@ class Controller:
             self.try_disable()
             raise
 
+    @exclusive_command
     def pp_move(self, targets):
         if self.parameter_test_only:
             raise ControlError("PARAMETER TEST ONLY 模式禁止 pp-move")
@@ -193,36 +266,33 @@ class Controller:
             raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
         if not self.pp_enabled:
             raise ControlError("请先 enable")
-        if not self.pp_lock.acquire(blocking=False):
-            raise ControlError("上一批 PP 运动尚未完成")
         try:
-            try:
-                axes = prepare(targets, self.drives, PPEncoder(self.mechanical), control=0x000F)
-            except ValueError as exc:
-                raise ControlError(f"PP 配置错误: {exc}") from exc
-            motion = PPMotion(self, axes)
-            torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
-            trigger = self.frames(self.drives, 0x001F, torques)
-            clear = [a.frames[2] for a in axes]
-            try:
-                already_in_window = motion.run(trigger, clear)
-            except BaseException:
-                self.abort_motion()
-                raise
-            self.completed_positions = {a.target.command.node_id: a.params.target_position for a in axes}
-            if already_in_window:
-                self.report("七轴在触发前已位于本次到位窗口内，本次定位无需位移。")
-            self.report("Seven Axis PP Motion Completed\n\n" + "\n".join(
-                f"Node {n}: Completed" for n in self.drives)
-                + "\n\nAll axes remain Operation Enabled.\nReady for next pp-move.")
-        finally:
-            self.pp_lock.release()
+            axes = prepare(targets, self.online_drives, PPEncoder(self.mechanical), control=0x000F)
+        except ValueError as exc:
+            raise ControlError(f"PP 配置错误: {exc}") from exc
+        motion = PPMotion(self, axes)
+        torques = {a.target.command.node_id: a.target.torque_per_mille for a in axes}
+        trigger = self.frames(0x001F, torques)
+        clear = [a.frames[2] for a in axes]
+        try:
+            already_in_window = motion.run(trigger, clear)
+        except BaseException:
+            self.abort_motion()
+            raise
+        self.completed_positions = {a.target.command.node_id: a.params.target_position for a in axes}
+        if already_in_window:
+            self.report("在线节点在触发前已位于本次到位窗口内，本次定位无需位移。")
+        group = "Seven Axis" if len(axes) == 7 else f"{len(axes)} Axis"
+        self.report(f"{group} PP Motion Completed\n\n" + "\n".join(
+            f"Node {n}: Completed" for n in self.online_drives)
+            + "\n\nAll participating axes remain Operation Enabled.\nReady for next pp-move.")
 
+    @exclusive_command
     def move_test(self, targets):
         if not self.initialized:
             raise ControlError("请先 init")
         try:
-            axes = prepare(targets, self.drives, PPEncoder(self.mechanical))
+            axes = prepare(targets, self.online_drives, PPEncoder(self.mechanical))
         except ValueError as exc:
             raise ControlError(f"PP 配置错误: {exc}") from exc
         frames = tuple(axis.frames[i] for i in range(3) for axis in axes)
@@ -232,7 +302,7 @@ class Controller:
             self.guard(DISABLED)
             self.needs_disable = True
             stamp = self.clock.batch(frames, guard=lambda: self.guard(DISABLED), echoes=echoes)
-            samples = self.wait_feedback(self.drives, description="批次后失能确认", since=stamp,
+            samples = self.wait_feedback(self.online_nodes, description="批次后失能确认", since=stamp,
                                          target=DISABLED, both=True, exact_cycle=True)
         except ControlError as exc:
             self.report(batch_report(axes, echoes, samples, exc))
@@ -249,8 +319,9 @@ class Controller:
             self.report(f"{exc}\n{self.status()}\n无法确认整组失能，请使用现场安全回路并确保垂直负载受支撑。")
 
     def disable(self):
-        self._disable_group()
-        self.pp_inhibited = False
+        with self.lifecycle_lock:
+            self._disable_group()
+            self.pp_inhibited = False
 
     def _disable_group(self):
         self.pp_enabled = False
@@ -259,12 +330,12 @@ class Controller:
             raise ControlError("Disable not confirmed，SYNC 尚未运行")
         self.needs_disable = True
         try:
-            stamp = self.clock.batch(self.frames(self.drives), disable=True)
-            self.wait_feedback(self.drives, since=stamp, target=DISABLED, description="RPDO3 失能")
+            stamp = self.clock.batch(self.frames(), disable=True)
+            self.wait_feedback(self.online_nodes, since=stamp, target=DISABLED, description="RPDO3 失能")
         except Exception as exc:
             raise ControlError(f"Disable not confirmed: {exc}") from exc
         self.needs_disable = False
-        self.report("TPDO1 已确认全部节点 Switch On Disabled")
+        self.report("TPDO1 已确认全部在线节点 Switch On Disabled")
 
     def try_disable(self):
         try:
@@ -275,12 +346,17 @@ class Controller:
             return False
 
     def close(self):
-        if self.clock.done.is_set():
+        with self.lifecycle_lock:
+            self._close()
+
+    def _close(self):
+        if self.closed:
             return
         try:
             if self.clock.thread.ident is not None:
+                samples = self.feedback.snapshot(self.online_nodes)
                 uncertain = any(monotonic() - s.received1 > config.FEEDBACK_TIMEOUT
-                                or state(s.word) != DISABLED for s in self.feedback.snapshot().values())
+                                or state(s.word) != DISABLED for s in samples.values())
                 if uncertain or self.needs_disable:
                     self.disable()
             elif self.bus.operational_started:
@@ -289,3 +365,4 @@ class Controller:
             self.clock.close()
             self.initialized = False
             self.bus.close()
+            self.closed = True

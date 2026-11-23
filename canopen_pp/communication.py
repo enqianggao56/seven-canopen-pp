@@ -2,6 +2,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty
 from threading import Condition, Event, Thread
 from time import monotonic
 
@@ -11,6 +12,17 @@ from . import config
 from .drives import ControlError
 
 VENDOR = Path(__file__).resolve().parents[1] / "vendor"
+
+
+class SdoTimeout(ControlError):
+    """The SDO client timed out waiting for a response from this node."""
+
+
+def _sdo_error(message, exc):
+    # canopen 2.4.1 also uses SdoCommunicationError for malformed replies.
+    if isinstance(exc, canopen.SdoCommunicationError) and isinstance(exc.__context__, Empty):
+        return SdoTimeout(message)
+    return ControlError(message)
 
 
 class Adapter:
@@ -31,7 +43,6 @@ class Adapter:
         self.nodes = {}
         for n, drive in drives.items():
             node = self.network.add_node(n, str(VENDOR / drive.eds))
-            node.sdo.RESPONSE_TIMEOUT = max(config.INITIAL_SDO_TIMEOUT, config.SDO_TIMEOUT)
             node.sdo.MAX_RETRIES = 1  # one attempt
             self.nodes[n] = node
         try:
@@ -61,6 +72,10 @@ class Adapter:
         if msg.is_rx:
             self.network.notify(msg.arbitration_id, msg.data, msg.timestamp)
 
+    def begin_initialization(self):
+        self.preoperational.clear()
+        self.operational_started = False
+
     def require_preop(self, n):
         if self.operational_started or n not in self.preoperational:
             raise ControlError(f"Node {n} SDO 仅允许在初始化 Pre-operational 阶段使用")
@@ -77,7 +92,7 @@ class Adapter:
                 raise ValueError(f"期望 {len(var)} bit，收到 {len(data)*8} bit")
             return var.decode_raw(data)
         except Exception as exc:
-            raise ControlError(f"Node {n} SDO read {index:04X}:{sub:02X}: {exc}") from exc
+            raise _sdo_error(f"Node {n} SDO read {index:04X}:{sub:02X}: {exc}", exc) from exc
         finally:
             node.sdo.RESPONSE_TIMEOUT = config.SDO_TIMEOUT
 
@@ -90,7 +105,7 @@ class Adapter:
             var = node.object_dictionary.get_variable(index, sub)
             node.sdo.download(index, sub, var.encode_raw(value))
         except Exception as exc:
-            raise ControlError(f"Node {n} SDO write {index:04X}:{sub:02X}={value}: {exc}") from exc
+            raise _sdo_error(f"Node {n} SDO write {index:04X}:{sub:02X}={value}: {exc}", exc) from exc
 
     def expect(self, n, index, value, sub=0):
         actual = self.read(n, index, sub)
@@ -110,6 +125,7 @@ class Adapter:
             raise ControlError(f"Node {n} NMT {command:#04x}: {exc}") from exc
         if command == 0x80:
             self.preoperational.add(n)
+            self.nodes[n].sdo.RESPONSE_TIMEOUT = max(config.INITIAL_SDO_TIMEOUT, config.SDO_TIMEOUT)
 
     def transmit(self, cob, data, *, timeout=None):
         with self.condition:

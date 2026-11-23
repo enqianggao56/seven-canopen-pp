@@ -64,7 +64,8 @@ def test_init_and_status_show_physical_and_raw_values(offline, monkeypatch, caps
             str(node), config.AXIS_CONFIG[node].family, f"0x{before[node].word:04X}",
             "Operation Enabled", "1", position, str(pos), velocity, str(vel)]
     commands = iter(["init", "status", "exit"])
-    monkeypatch.setattr(main, "connect", lambda *args: c)
+    monkeypatch.setattr(main, "open_controller", lambda *args: c)
+    monkeypatch.setattr(c, "initialize", lambda: None)
     monkeypatch.setattr("builtins.input", lambda prompt: next(commands))
     assert main.main() == 0
     assert capsys.readouterr().out.count(table) == 2

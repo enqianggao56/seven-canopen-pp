@@ -4,32 +4,32 @@
   "position_mode": "absolute",
   "axes": {
     "1": {
-      "position": 5.0,
+      "position": 100.0,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0
     },
     "2": {
-      "position": 5.0,
+      "position": 100.0,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0
     },
     "3": {
-      "position": 5.0,
+      "position": 100.0,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0
     },
     "4": {
-      "position": 5.0,
+      "position": 45.0,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0,
       "torque_per_mille": 100
     },
     "5": {
-      "position": 5.0,
+      "position": 45.0,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0,
@@ -43,7 +43,7 @@
       "torque_per_mille": 100
     },
     "7": {
-      "position": 1.0,
+      "position": 5.0,
       "velocity": 1.0,
       "acceleration": 2.0,
       "deceleration": 2.0,

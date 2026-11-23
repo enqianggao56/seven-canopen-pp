@@ -2,10 +2,10 @@
 from dataclasses import dataclass
 import struct
 
-from .drives import ControlError, state
+from .drives import state
 from .pdo import slots
 from .pp import PPParameters
-from .pp_config import AxisTarget, NODES
+from .pp_config import AxisTarget
 
 
 @dataclass(frozen=True)
@@ -17,11 +17,9 @@ class PreparedAxis:
 
 
 def prepare(targets, drives, encoder, control=None):
-    if set(drives) != set(NODES):
-        raise ControlError("PP 批次需要全部七个驱动器")
-    encoded = targets.encode(encoder)
     axes = []
-    for target, p in zip(targets.axes, encoded, strict=True):
+    for target in targets.selected(drives):
+        p = target.encode(encoder)
         n = target.command.node_id
         drive = drives[n]
         rp1, rp2, rp3 = slots(drive)[:3]

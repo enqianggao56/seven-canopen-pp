@@ -58,12 +58,7 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
     c, sims, trace, log, path = motion_system
     monkeypatch.setattr(terminal, "CONFIG_PATH", path)
 
-    def connect(*args):
-        assert not c.initialized
-        c.initialize()
-        return c
-
-    monkeypatch.setattr(terminal, "connect", connect)
+    monkeypatch.setattr(terminal, "open_controller", lambda *args: c)
 
     def commands():
         yield "init"

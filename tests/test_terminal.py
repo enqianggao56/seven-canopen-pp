@@ -31,10 +31,10 @@ def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, caps
     repaired = json.loads(CONFIG_PATH.read_text())
     repaired["axes"]["1"]["position"] = 100
     path.write_text("{}")
-    controller = Mock()
+    controller = Mock(online_nodes=range(1, 8))
     connect = Mock(return_value=controller)
     monkeypatch.setattr(terminal, "CONFIG_PATH", path)
-    monkeypatch.setattr(terminal, "connect", connect)
+    monkeypatch.setattr(terminal, "open_controller", connect)
 
     def commands():
         yield "init"
