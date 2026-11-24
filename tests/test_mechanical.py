@@ -11,6 +11,9 @@ from canopen_pp.mechanical import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("reference_calibration")
+
+
 @pytest.fixture
 def converter():
     return MechanicalConverter()

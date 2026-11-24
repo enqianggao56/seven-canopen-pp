@@ -11,6 +11,7 @@ from canopen_pp.communication import Adapter, VENDOR
 from canopen_pp.controller import Controller
 from canopen_pp.drives import ControlError, make_drives
 from canopen_pp.pdo import slots
+from canopen_pp.pp_config import load_targets
 
 
 class SimDrive:
@@ -127,8 +128,10 @@ def test_full_wire_sequence(system):
     c.initialize()
     assert not any(s.frames for s in sims.values())
     c.enable()
+    torques = {a.command.node_id: struct.pack("<h", a.torque_per_mille)
+               for a in load_targets().axes if a.torque_per_mille is not None}
     for n in range(5, 9):
-        assert sims[n].node.get_data(0x6071, 0) == bytes.fromhex("64 00")
+        assert sims[n].node.get_data(0x6071, 0) == torques[n]
     c.disable()
     c.enable()
     c.close()
@@ -150,7 +153,7 @@ def test_full_wire_sequence(system):
             if cob <= 0x404:
                 assert len(data) == 3
             else:
-                assert data[3:] == (bytes(2) if data[0] == 1 else bytes.fromhex("64 00"))
+                assert data[3:] == (bytes(2) if data[0] == 1 else torques[cob - 0x400])
         if cob == 0x401:
             assert [item[0] for item in trace[i:i+len(sims)+1]] == [0x400+n for n in sims]+[0x80]
     assert all([cw for cw, _, _ in s.frames] == [6, 7, 15, s.drive.disable_word]*2
@@ -228,7 +231,7 @@ def test_partial_enable_batch_replaced_before_next_sync(system, monkeypatch):
     original = c.bus.transmit
 
     def fail_once(cob, data, **kw):
-        if cob == 0x405 and data == bytes.fromhex("0F 00 01 64 00"):
+        if cob == 0x405 and data[:3] == bytes.fromhex("0F 00 01"):
             raise ControlError("injected CAN TX failure")
         return original(cob, data, **kw)
 

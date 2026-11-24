@@ -6,13 +6,17 @@
 
 运行所需的两份 EDS、四份设备手册和 CiA 402 协议 PDF 均可在 [vendor 目录](vendor/) 中查阅。
 
-需要 Python 3.11+。现场使用 SocketCAN 的 `can0`，接口须已按 1 Mbit/s 启用。可通过 `ip -details link show can0` 查看实际波特率和链路状态。
+在 Linux 上准备 Git、Python 3.11 或更高版本，以及该解释器的 venv 和 pip 支持。首次启动需要联网下载依赖。例如在系统自带 Python 3.11+ 的 Debian/Ubuntu 上，可用 `sudo apt install git python3 python3-venv` 安装所需工具。
 
 ```bash
-python3.11 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m canopen_pp.main
+git clone https://github.com/enqianggao56/seven-canopen-pp.git
+cd seven-canopen-pp
+./run.sh
 ```
+
+启动脚本在项目目录创建并复用 `.venv`。已有仓库可在项目目录执行 `git pull --ff-only` 后再次运行 `./run.sh`。没有 CAN 设备时也可以打开终端，输入 `exit` 退出，或运行下文的离线测试。
+
+连接实机前，用 `ip -details link show can0` 确认 SocketCAN 接口已启用且波特率为 1 Mbit/s。输入 `init` 时程序才连接总线。
 
 | 命令 | 行为 |
 |---|---|
@@ -43,17 +47,17 @@ CAN 后端、通道、波特率和主站周期在配置区集中设置。默认 
 
 加载器检查完整八轴结构的未知字段、缺项和重复键。终端对本次在线节点检查数值类型、有限性、机械设计限值及可编码范围。三个轮廓幅值必须为正且可编码，力矩为 1–1000 的整数。读取失败或内容无效时，只拒绝本次命令，保留连接和稳定使能状态。冻结的八轴数据供本次调用使用，运动中编辑文件只影响下一次读取。[配置加载器](canopen_pp/pp_config.py)
 
-随附 JSON 将八轴的绝对目标均设为 0。新增 Node 4 为大臂旋转轴，减速比 120:1，配置速度为 5°/s，加减速度均为 10°/s²。首次运动前须确认现场节点编号、机械零点和正方向。150°/s 的设计上限对应电机 3000 RPM，实际转速能力需实机确认。
+随附 JSON 中节点 2、3、5、6、7 的目标分别为 8 mm、11 mm、121°、69°、18°，其余为 0。新增 Node 4 为大臂旋转轴，减速比 120:1，配置速度为 5°/s，加减速度均为 10°/s²。首次运动前须确认现场节点编号、机械零点和正方向。150°/s 的设计上限对应电机 3000 RPM，实际转速能力需实机确认。
 
 ## 重复绝对定位
 
 **节点 2 承载条件**　运动异常和主动关闭都可能对 Kinco 发送 Disable Voltage。在上电调试前，落实独立防坠支撑，按 iSMD 手册 §5.7.2 现场验证抱闸、驱动器停机设置、制动延时、负载保持和外部急停。当前 TPDO 没有机械抱闸闭合反馈。历史失能记录只确认了电气状态。[Kinco 手册](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf)
 
 ```bash
-CANOPEN_PP_MOTION=1 .venv/bin/python -m canopen_pp.main
+CANOPEN_PP_MOTION=1 ./run.sh
 ```
 
-1. 输入 `init`，核对在线名单、实际位置和速度。八轴机械零点为 0、方向为 +1。根据实际位置在 JSON 中填写本次绝对目标。
+1. 输入 `init`，核对在线名单、实际位置和速度。按每轴的 `zero_offset` 和 `direction` 核对机械坐标。根据实际位置在 JSON 中填写本次绝对目标。
 2. 输入 `enable`，确认在线节点均为 Operation Enabled、6061h = 1。
 3. 输入 `pp-move`。完成后使用 `status` 查看在线节点反馈。连接、NMT Operational 和默认 100 ms 的 SYNC 持续运行。
 4. 在另一终端修改并保存同一 JSON，再输入 `pp-move`。每次按机械行程验证绝对目标，按各轴设计上限验证速度、加速度和减速度。一次命令可以直接定位到行程内的远端目标。
@@ -65,7 +69,7 @@ CANOPEN_PP_MOTION=1 .venv/bin/python -m canopen_pp.main
 | 4–7 | 0.05° |
 | 8 | 0.005 mm |
 
-运动完成时，主站用表中阈值核对实际位置误差。TPDO2 持续更新实际速度，供 `status` 查看。例如节点 2 当前位于 100 mm，使用随附 JSON 的 0 mm 绝对目标时，通过预检后会向零点移动 100 mm。[轴配置](canopen_pp/config.py)
+运动完成时，主站用表中阈值核对实际位置误差。TPDO2 持续更新实际速度，供 `status` 查看。例如节点 2 当前位于 100 mm，使用随附 JSON 的 8 mm 绝对目标时，通过预检后会向该目标移动 92 mm。[轴配置](canopen_pp/config.py)
 
 **运动握手**　主站先确认所有在线节点反馈有效、处于 PP 模式和 Operation Enabled 状态，并确认节点 1–4 的 ACK 为 0。已有成功定位时还检查上次目标的保持状态。唯一的 SYNC 线程先向在线节点发送 RPDO1、RPDO2 和 bit 4 为零的 RPDO3，再发 SYNC。收到该装载 SYNC 周期的全部在线节点完整 TPDO 后，下一批 RPDO3 统一发送 001Fh，随后发送一个 SYNC。节点 1–4 的新反馈 bit 12 全为 1 后，向在线节点同批发 000Fh，再等待节点 1–4 的 bit 12 全部复位。节点 5–8 跳过 bit 12 检查。以上各阶段均检查反馈时效和状态。传输类型 1、逐帧 TX 回显、独立装载周期和后续 TPDO 构成协议级同步屏障，当前反馈映射未逐项回读驱动器内部的轮廓寄存器。[运动控制](canopen_pp/motion.py)
 
@@ -128,11 +132,11 @@ from canopen_pp.mechanical import MechanicalConverter
 converter = MechanicalConverter()
 converter.get_config(1).unit           # "mm"
 converter.validate_target(1, 600.0)    # 通过时返回 None
-converter.target_to_raw(1, 600.0)      # 3276800 inc
-converter.raw_to_actual(1, 3276800)    # 600.0 mm
-converter.raw_to_actual(1, 6619136)    # 1212.0 mm，保留超出目标行程的反馈
-converter.raw_to_velocity(1, 65536)    # 0.732421875 mm/s，iSMD 手册比例
-converter.raw_to_velocity(5, 100)      # 60.0 deg/s
+converter.target_to_raw(1, 600.0)      # -1146460 inc
+converter.raw_to_actual(1, -1146460)    # 600.0 mm
+converter.raw_to_actual(1, -4488796)    # 1212.0 mm，保留超出目标行程的反馈
+converter.raw_to_velocity(1, 65536)    # -0.732421875 mm/s，iSMD 手册比例
+converter.raw_to_velocity(5, 100)      # -60.0 deg/s
 converter.raw_to_velocity(8, 300)      # 1.0 mm/s，丝杠螺母直线速度
 ```
 
@@ -140,11 +144,11 @@ K 是参考轴每转的机械位移，C 是同一转对应的**通信位置增�
 
 反馈只检查输入的整数类型及 I32 范围，再计算 `(raw − zero_offset) × direction × K / C`。节点 7 保留完整圈数，节点 8 的 mm 表示丝杠螺母直线位移。软件目标限位用于校验输入，现场安全保护仍依靠驱动器限位、机械限位开关及急停。
 
-`zero_offset` 是机械零点对应的原始计数，`direction` 为 +1 或 −1。默认 0 和 +1 只是初始配置，实际机械零点和方向尚待现场确认。Kinco 的 `0x6063` 和 RobStride 的 `0x6064` 已按 I32 解码。项目采用的 C 分别为每电机轴转 65536 inc、每输出法兰转 16384 inc。各实轴的目标及反馈计数与实际位移是否匹配仍待实机验证。
+`zero_offset` 是机械零点对应的原始计数，`direction` 为 +1 或 −1。各轴使用配置文件中各自的零点和方向，换机时需按实机核对。Kinco 的 `0x6063` 和 RobStride 的 `0x6064` 已按 I32 解码。项目采用的 C 分别为每电机轴转 65536 inc、每输出法兰转 16384 inc。各实轴的目标及反馈计数与实际位移是否匹配仍待实机验证。
 
 ### 速度反馈与终端读数
 
-下表是离线反馈示例。两列原始值保留驱动器上报的有符号整数。位置和速度共用 K、单位及方向，零点偏移只作用于位置。
+下表是零点为 0、方向为 +1 的离线反馈示例。两列原始值保留驱动器上报的有符号整数。位置和速度共用 K、单位及方向，零点偏移只作用于位置。
 
 ```text
 Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
@@ -154,21 +158,21 @@ Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocit
 8     EL05   0x0037      Operation Enabled   1     10.000 mm   81920     1.000 mm/s    300
 ```
 
-- **Kinco** 使用 `velocity_unit="kinco_606c_dec"`。iSMD 手册 §7.2 对 `606Ch` 给出 `raw = rpm × 512 × 编码器分辨率 / 1875`。按项目电机轴 C = 65536 和手册分辨率 65536 换算，机械速度为 `raw × direction × K / (C × 16.384)`。配置中的 **16.384 秒**是由 `60 × 512 / 1875` 得到的等效计数时间基准，与 SYNC 和反馈刷新周期独立。对于已确认直接上报 inc/s 的设备，可单轴配置 `"inc_per_second"`（1 秒基准）。例如节点 1 的 65536 在此配置下显示 `12.000 mm/s`。[iSMD 手册 §7.2](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf) · [速度单位配置](canopen_pp/config.py)
+- **Kinco** 使用 `velocity_unit="kinco_606c_dec"`。iSMD 手册 §7.2 对 `606Ch` 给出 `raw = rpm × 512 × 编码器分辨率 / 1875`。按项目电机轴 C = 65536 和手册分辨率 65536 换算，机械速度为 `raw × direction × K / (C × 16.384)`。配置中的 **16.384 秒**是由 `60 × 512 / 1875` 得到的等效计数时间基准，与 SYNC 和反馈刷新周期独立。对于已确认直接上报 inc/s 的设备，可单轴配置 `"inc_per_second"`（1 秒基准）。例如节点 1 在方向为 +1 时，65536 在此配置下显示 `12.000 mm/s`。[iSMD 手册 §7.2](vendor/iSMD高性能低压伺服一体机使用手册20260303.pdf) · [速度单位配置](canopen_pp/config.py)
 - **RobStride** 使用 `velocity_unit="rpm_0_1"`。三款手册 §5.4 均标注 `606Ch` 每计数为 0.1 rpm，机械速度为 `raw × 0.1 × direction × K / 60`。项目按输出法兰作为速度参考轴换算，`606Ch` 条目未单独说明参考轴，现场对应关系仍待验证。换算直接使用项目的 K。[RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf)
 
 TPDO1 超时时，`Position`、`Raw(inc)` 和模式显示 `--`，状态列标记 `TPDO1 STALE`，状态字保留最后一次有效读数。TPDO2 超时时，`Velocity` 显示 `--`，`Vel(raw)` 显示 `TPDO2 STALE`。两路独立更新。有效反馈的某个物理量转换失败时，对应列显示 `CONV ERROR`，原始整数仍可读，表后列出节点、字段及原因。
 
 ## 离线 PP 参数编码（阶段 01）
 
-`PPEncoder.encode()` 接受一个轴的绝对目标和三个正的轮廓幅值，返回四个对象字典整数。可在只有 Python 标准库的环境中运行。下面的节点 5 示例中，负角度决定目标位置的符号，加速和减速可以分别指定。[编码器](canopen_pp/pp.py)
+`PPEncoder.encode()` 接受一个轴的绝对目标和三个正的轮廓幅值，返回四个对象字典整数。可在只有 Python 标准库的环境中运行。节点 5 的零点为 16400 inc、方向为 −1，示例中的 −45° 对应 18448 inc。[编码器](canopen_pp/pp.py)
 
 ```python
 from canopen_pp.pp import PPCommand, PPEncoder
 
 command = PPCommand(node_id=5, target_position=-45, velocity=60, acceleration=12, deceleration=3)
 params = PPEncoder().encode(command)
-# PPParameters(target_position=-2048, profile_velocity=100,
+# PPParameters(target_position=18448, profile_velocity=100,
 #              profile_acceleration=20, profile_deceleration=5)
 ```
 
@@ -176,14 +180,14 @@ params = PPEncoder().encode(command)
 |---|---|---:|---:|---:|
 | 1、2、3 | 分别为 0–1200、0–1100、0–700 mm | 600 mm/s | 600 mm/s² | 600 mm/s² |
 | 4 | ±55° | 150 °/s | 150 °/s² | 150 °/s² |
-| 5、6、7 | 分别为 ±90、±45、±360° | 720 °/s | 720 °/s² | 720 °/s² |
+| 5、6、7 | 分别为 −90 至 +130°、−45 至 +90°、±360° | 720 °/s | 720 °/s² | 720 °/s² |
 | 8 | 0–20 mm | 14 mm/s | 14 mm/s² | 14 mm/s² |
 
 这些数值用于机械设计限值检查，实机调试速度另行选定。编码器只接受 1–8 的整数节点和有限的 `int`、`float` 工程量，拒绝布尔值。目标由 `MechanicalConverter.target_to_raw()` 检查行程、方向、零点及 I32 范围。若非零目标量化后与机械零点重合，编码器也会拒绝。位置对象为 I32（−2³¹ 至 2³¹−1），三项轮廓对象均为 U32（0 至 2³²−1）。两份 EDS 的这四个条目均未给出更窄的取值范围。[设计限值](canopen_pp/config.py) · [Kinco EDS](vendor/motor.eds) · [RobStride EDS](vendor/RS06.eds)
 
 ### 八轴离线编码结果
 
-以下为默认机械配置下 `PPEncoder.encode()` 的十进制输出。速度 v、加速度 a、减速度 d 分别取各轴的设计上限。直线轴的 v 用 mm/s，a、d 用 mm/s²。旋转轴的 v 用 °/s，a、d 用 °/s²。节点 4–7 取负向行程端点，以核对绝对位置的符号。[八轴边界测试](tests/test_pp.py)
+以下为零点为 0、方向为 +1 的测试配置下 `PPEncoder.encode()` 的十进制输出。速度 v、加速度 a、减速度 d 分别取各轴的设计上限。直线轴的 v 用 mm/s，a、d 用 mm/s²。旋转轴的 v 用 °/s，a、d 用 °/s²。节点 4–7 取负向行程端点，以核对绝对位置的符号。[八轴边界测试](tests/test_pp.py)
 
 | 节点 | 驱动器 | 绝对目标 | 输入 v / a / d | 607Ah 位置（I32） | 6081h 速度（U32） | 6083h 加速度（U32） | 6084h 减速度（U32） |
 |---:|---|---:|---|---:|---:|---:|---:|
@@ -228,7 +232,7 @@ RobStride 三款手册 §5.6 给出 `6081h` 每计数 0.1 rpm、`6083h` 每计�
 
 每个在线节点在完整参数批次中接收 3 帧 RPDO，在每个 SYNC 周期发送 TPDO1 和 TPDO2 各 1 帧。八轴全部在线时，完整参数批次为 24 帧 RPDO，每周期反馈为 16 帧 TPDO。部分在线时，若在线节点数为 N，对应帧数为 3N 和 2N。
 
-三款 RobStride 手册 §5.6 均将 `6071h Target_torque` 列为 PP 运动前的必设参数，在该模式下它限定最大力矩绝对值。字段为小端 I16，单位为额定力矩的千分之一。节点 5–8 分别使用本次 JSON 的 `torque_per_mille`，随附配置为 100‰。失能及失败回退时，`0001h` 控制字随帧写入力矩值 0，下次使能从 Shutdown 阶段恢复配置值。手册还要求运动前设置轮廓速度和加速度。[配置](canopen_pp/config.py) · [RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf)
+三款 RobStride 手册 §5.6 均将 `6071h Target_torque` 列为 PP 运动前的必设参数，在该模式下它限定最大力矩绝对值。字段为小端 I16，单位为额定力矩的千分之一。节点 5–8 分别使用本次 JSON 的 `torque_per_mille`，随附配置依次为 600‰、500‰、700‰、500‰。失能及失败回退时，`0001h` 控制字随帧写入力矩值 0，下次使能从 Shutdown 阶段恢复配置值。手册还要求运动前设置轮廓速度和加速度。[配置](canopen_pp/config.py) · [RS06 手册](vendor/RS06使用说明书260428.pdf) · [RS00 手册](vendor/RS00使用说明书260428.pdf) · [EL05 手册](vendor/EL05使用说明书2600428.pdf)
 
 初始化按 ID 选择设备描述。节点 1–4 使用 Kinco EDS。节点 5–8 使用随项目提供的 RS06 EDS，RS00 和 EL05 的映射逐台通过 SDO 验证。初始化读取厂家号及当前状态字，检查 EDS 的对象类型、可映射标记和读写属性。需要重映射时先置 COB-ID 的禁用位，再清零数量、写条目和数量、配置传输类型，最后启用。若额外启用的 RPDO 可改写该节点的任一 RPDO3 字段（包括 RobStride 的力矩上限），初始化禁用该额外槽并读回。在线节点配置结束后再次读回每个在线节点五个槽的 COB-ID、传输类型、数量和每个有效条目。SDO Abort 或读回不符会给出节点及对象地址。配置中断时，已变更的映射可能保留在从站 RAM，原因排除后重新执行 `init`。[Kinco EDS](vendor/motor.eds) · [RobStride EDS](vendor/RS06.eds)
 

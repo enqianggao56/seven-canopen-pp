@@ -8,12 +8,14 @@ from canopen_pp.pp_config import CONFIG_PATH, load_targets
 
 def test_valid_snapshot(tmp_path):
     path = tmp_path / "targets.json"
-    path.write_bytes(CONFIG_PATH.read_bytes())
+    document = json.loads(CONFIG_PATH.read_text())
+    expected_torques = [document["axes"][str(n)].get("torque_per_mille") for n in range(1, 9)]
+    path.write_text(json.dumps(document))
     targets = load_targets(path)
     path.write_text("{}")
-    assert targets.name == "eight_axis_pp_test"
+    assert targets.name == document["name"]
     assert [axis.command.node_id for axis in targets.axes] == list(range(1, 9))
-    assert [axis.torque_per_mille for axis in targets.axes] == [None] * 4 + [100] * 4
+    assert [axis.torque_per_mille for axis in targets.axes] == expected_torques
     with pytest.raises(FrozenInstanceError):
         targets.axes[0].command.velocity = 5
 

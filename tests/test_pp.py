@@ -13,6 +13,9 @@ from canopen_pp.mechanical import (
 from canopen_pp.pp import PPCommand, PPEncoder, PPParameters
 
 
+pytestmark = pytest.mark.usefixtures("reference_calibration")
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     connect = Mock(side_effect=AssertionError("offline encoder opened CAN"))

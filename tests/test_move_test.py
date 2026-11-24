@@ -16,6 +16,7 @@ def parameter_test_mode(monkeypatch):
     monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", True)
 
 
+@pytest.mark.usefixtures("reference_calibration")
 def test_batch_on_virtual_bus(system, monkeypatch):
     c, sims, trace, log = system
     c.initialize()

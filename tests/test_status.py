@@ -17,7 +17,7 @@ TIME = 100.0
 
 
 @pytest.fixture
-def offline(monkeypatch):
+def offline(monkeypatch, reference_calibration):
     monkeypatch.setattr("canopen_pp.pdo.time", lambda: TIME)
     monkeypatch.setattr("canopen_pp.pdo.monotonic", lambda: TIME)
     monkeypatch.setattr("canopen_pp.controller.monotonic", lambda: TIME)
