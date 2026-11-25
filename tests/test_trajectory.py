@@ -89,3 +89,78 @@ def test_small_start_drift_must_still_meet_encoded_time():
     changed = {1: Sample(pos=encoder.converter.target_to_raw(1, .01))}
     with pytest.raises(ControlError, match="编码轮廓时间误差"):
         trajectory.check_start(encoder, baseline, changed)
+
+
+@pytest.mark.parametrize("node", range(5, 8))
+def test_76_counts_in_three_seconds(node):
+    axis = config.MECHANICAL_CONFIG[node]
+    targets = [0.] * 8
+    targets[node - 1] = 76 * axis.travel_per_revolution / axis.increments_per_revolution
+    profile_axis = profile([0] * 8, targets, 3).moving[node]
+    p = profile_axis.params
+    assert abs(profile_axis.encoded_duration_s - 3) <= .1
+    assert (p.profile_velocity, p.profile_acceleration, p.profile_deceleration) == (1, 4, 4)
+
+
+@pytest.mark.parametrize(("node", "counts", "duration"), [
+    (1, 110, 5), (2, 110, 5), (3, 138, 3), (4, 1093, 10),
+    (5, 76, 3), (6, 76, 3), (7, 76, 3), (8, 76, 3),
+])
+def test_solution_outside_original_neighborhood(node, counts, duration):
+    from math import floor
+
+    cfg = config.MECHANICAL_CONFIG[node]
+    distance = counts * cfg.travel_per_revolution / cfg.increments_per_revolution
+    vs, acs = map(float, PPEncoder().profile_scales(node))
+    v = distance / (.75 * duration)
+    a = v / (.25 * duration)
+
+    def elapsed(i, j):
+        peak = min(i/vs, sqrt(distance*j/acs))
+        return distance/peak + peak/(j/acs)
+
+    for i in range(max(1, floor(v*vs)-1), floor(v*vs)+3):
+        for j in range(max(1, floor(a*acs)-1), floor(a*acs)+3):
+            assert abs(elapsed(i, j) - duration) > config.PP_ENCODED_TIME_TOLERANCE_S
+
+    goals = [0.] * 8
+    goals[node-1] = distance
+    axis = profile([0]*8, goals, duration).moving[node]
+    p = axis.params
+    limit = config.PP_DESIGN_LIMITS[node]
+    assert 1 <= p.profile_velocity <= limit.velocity*vs
+    assert 1 <= p.profile_acceleration == p.profile_deceleration <= min(limit.acceleration, limit.deceleration)*acs
+    assert axis.encoded_duration_s == pytest.approx(elapsed(p.profile_velocity, p.profile_acceleration))
+    assert abs(axis.encoded_duration_s - duration) <= config.PP_ENCODED_TIME_TOLERANCE_S
+
+
+@pytest.mark.parametrize("node", range(1, 9))
+def test_time_above_slowest_integer_profile(node):
+    goals = [0.] * 8
+    goals[node-1] = .1
+    with pytest.raises(ValueError, match=f"Node {node} 整数轮廓不可行.*最佳.*时间误差"):
+        profile([0]*8, goals, 100_000)
+
+
+@pytest.mark.parametrize("node", range(5, 8))
+def test_point_one_degree_ten_seconds(node):
+    goals = [0.] * 8
+    goals[node-1] = .1
+    with pytest.raises(ValueError, match=f"Node {node} 整数轮廓不可行"):
+        profile([0]*8, goals, 10)
+
+
+@pytest.mark.parametrize("node", range(1, 5))
+def test_bounded_kinco_miss_is_not_reported_as_proven_infeasible(node, monkeypatch):
+    from canopen_pp.trajectory import SearchMiss
+
+    monkeypatch.setattr(config, "PP_ENCODED_TIME_TOLERANCE_S", 0)
+    with pytest.raises(SearchMiss, match=f"Node {node} 有界搜索未找到解.*6081/6083/6084"):
+        profile([0]*8, [.1]*8, 1.23456789, {node})
+
+
+def test_group_refits_fine_axis_to_coarse_axis_ramp():
+    targets = [4, 0, 0, 0, 76 * 360/16384, 0, 0, 0]
+    trajectory = profile([0]*8, targets, 3)
+    assert trajectory.ramp_s == pytest.approx(.25)
+    assert abs(trajectory.moving[1].encoded_ramp_s - trajectory.moving[5].encoded_ramp_s) < .001

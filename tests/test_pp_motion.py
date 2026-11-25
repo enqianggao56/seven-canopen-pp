@@ -20,6 +20,7 @@ def motion_system(system, monkeypatch, tmp_path):
     controller.parameter_test_only = False
     monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", False)
     monkeypatch.setattr(config, "PP_ACK_TIMEOUT", .35)
+    monkeypatch.setattr(config, "PP_ARRIVAL_TOLERANCE_S", .2)
     path = tmp_path / "targets.json"
     doc = json.loads(CONFIG_PATH.read_text())
     doc["duration_s"] = .8
@@ -273,7 +274,7 @@ def test_arrival_requires_velocity_in_window_and_reports_measured_time(motion_sy
     c, sims, trace, log, path = motion_system
     # Other axes settle on schedule. Axis 5 reports its final position early,
     # while its velocity remains nonzero until the delayed stop.
-    monkeypatch.setitem(config.PP_VELOCITY_TOLERANCES, 5, .3)  # simulated running speed is 0.6 deg/s
+    monkeypatch.setitem(config.PP_ARRIVAL_VELOCITY, 5, .3)  # simulated running speed is 0.6 deg/s
     sims[5].travel_s = 1.2
     c.initialize()
     c.enable()
@@ -424,7 +425,7 @@ def test_encoder_noise_during_load_start_and_arrival(motion_system, monkeypatch)
     c, sims, _, log, path = motion_system
     axis = sims[5]
     origin = axis.pos
-    monkeypatch.setitem(config.PP_VELOCITY_TOLERANCES, 5, .6)
+    monkeypatch.setitem(config.PP_START_VELOCITY, 5, .6)
     transmit = c.bus.transmit
     send = axis.node.network.send_message
 

@@ -269,13 +269,16 @@ class Controller:
         try:
             trajectory = motion.run(targets)
         except PlanningError:
+            motion.report_failure(targets)
             raise
         except BaseException:
             self.abort_motion()
+            motion.report_failure(targets)
             raise
         finally:
             motion.report_timing(targets.duration_s)
-        self.completed_positions = trajectory.positions
+        self.completed_positions = motion.held_positions
+        self.completed_positions.update({n: trajectory.positions[n] for n in trajectory.moving})
         self.triggered_nodes.update(trajectory.moving)
         if trajectory.moving:
             self.report(f"PP Motion Completed，运动节点 {list(trajectory.moving)}，"

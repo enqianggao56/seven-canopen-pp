@@ -1,0 +1,31 @@
+1795585861.875705 INIT allowed=(1, 2, 3, 4, 6, 7, 8)
+1795585863.689850 Link    Node  Motor  Statusword  CiA402 State        6061  Position      Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4231      Ready to Switch On  0     513.902 mm    -676248   0.010 mm/s    -928
+ONLINE  2     Kinco  0x4231      Ready to Switch On  0     514.359 mm    2481351   0.040 mm/s    3616
+ONLINE  3     Kinco  0x4231      Ready to Switch On  0     314.272 mm    2598865   -0.028 mm/s   3200
+ONLINE  4     Kinco  0x4231      Ready to Switch On  0     2.874 deg     -4627661  0.009 deg/s   -3200
+ONLINE  6     RS00   0x0040      Switch On Disabled  0     -1.494 deg    68        -2.400 deg/s  4
+ONLINE  7     EL05   0x0040      Switch On Disabled  0     -361.055 deg  1040      0.000 deg/s   0
+ONLINE  8     EL05   0x0040      Switch On Disabled  0     0.000 mm      0         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 7, 8
+OFFLINE: 无
+1795585863.690333 FINAL Link    Node  Motor  Statusword  CiA402 State        6061  Position      Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4231      Ready to Switch On  0     513.902 mm    -676248   0.010 mm/s    -928
+ONLINE  2     Kinco  0x4231      Ready to Switch On  0     514.359 mm    2481351   0.040 mm/s    3616
+ONLINE  3     Kinco  0x4231      Ready to Switch On  0     314.272 mm    2598865   -0.028 mm/s   3200
+ONLINE  4     Kinco  0x4231      Ready to Switch On  0     2.874 deg     -4627661  0.009 deg/s   -3200
+ONLINE  6     RS00   0x0040      Switch On Disabled  0     -1.494 deg    68        -2.400 deg/s  4
+ONLINE  7     EL05   0x0040      Switch On Disabled  0     -361.055 deg  1040      0.000 deg/s   0
+ONLINE  8     EL05   0x0040      Switch On Disabled  0     0.000 mm      0         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 7, 8
+OFFLINE: 无
+1795585863.803453 TPDO1 已确认全部在线节点 Switch On Disabled
+Traceback (most recent call last):
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/run_test.py", line 110, in <module>
+    run()
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/run_test.py", line 70, in run
+    samples, before = actuals(c)
+                      ^^^^^^^^^^
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/run_test.py", line 32, in actuals
+    raise ControlError(f"Node {n} 实测起点 {x} {cfg.unit} 超出行程，停止该批试验")
+canopen_pp.drives.ControlError: Node 7 实测起点 -361.0546875 deg 超出行程，停止该批试验

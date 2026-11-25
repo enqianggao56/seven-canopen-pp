@@ -1,0 +1,79 @@
+1795585972.301201 INIT allowed=(1, 2, 3, 4, 6, 8)
+1795585974.205780 Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     513.940 mm  -676456   0.092 mm/s    -8192
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.344 mm  2481267   0.070 mm/s    6272
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.279 mm  2598821   -0.008 mm/s   864
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.878 deg   -4627753  0.001 deg/s   -256
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     -1.406 deg  64        -1.800 deg/s  3
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    1         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795585974.206108 ENABLE
+1795585974.405725 0x0006 → Ready to Switch On  N1=0x4231 N2=0x4231 N3=0x4231 N4=0x4231 N6=0x0031 N8=0x0031
+1795585974.605863 0x0007 → Switched On  N1=0x4233 N2=0x4233 N3=0x4233 N4=0x4233 N6=0x0033 N8=0x0033
+1795585974.908114 0x000F → Operation Enabled  N1=0x4637 N2=0x4237 N3=0x4637 N4=0x4637 N6=0x0037 N8=0x0037
+1795585975.204824 HOLD {"1": 513.9393310546875, "2": 514.343994140625, "3": 314.2787170410156, "4": 2.878509521484375, "6": -1.38427734375, "8": 0}
+1795585975.405905 在线节点均在目标窗口内，本次定位无需位移。
+1795585975.405996 REJECT TEST T=10 s {"1": 513.9393310546875, "2": 514.343994140625, "3": 314.2787170410156, "4": 2.878509521484375, "6": -1.28427734375, "8": 0}
+1795585975.604863 Node 1 最近反馈，实际 513.93933 mm (-676454 inc)，目标 513.93933 mm (-676454 inc)，误差 +0 mm，位置阈值 0.02 mm，606C=-1056，机械速度 0.01180172 mm/s，阈值 1 mm/s，保持参考 -676455 inc，无已规划运动参数
+1795585975.604976 Node 2 最近反馈，实际 514.34381 mm (2481268 inc)，目标 514.34399 mm (2481269 inc)，误差 -0.00018310547 mm，位置阈值 0.02 mm，606C=1632，机械速度 0.018239021 mm/s，阈值 1 mm/s，保持参考 2481267 inc，无已规划运动参数
+1795585975.605063 Node 3 最近反馈，实际 314.2793 mm (2598817 inc)，目标 314.27872 mm (2598821 inc)，误差 +0.00057983398 mm，位置阈值 0.02 mm，606C=4736，机械速度 -0.041902065 mm/s，阈值 1 mm/s，保持参考 2598815 inc，无已规划运动参数
+1795585975.605139 Node 4 最近反馈，实际 2.8782806 deg (-4627754 inc)，目标 2.8785095 deg (-4627759 inc)，误差 -0.00022888184 deg，位置阈值 0.05 deg，606C=480，机械速度 -0.0013411045 deg/s，阈值 5 deg/s，保持参考 -4627757 inc，无已规划运动参数
+1795585975.605193 Node 6 最近反馈，实际 -1.3842773 deg (63 inc)，目标 -1.2744141 deg (58 inc)，误差 -0.10986328 deg，位置阈值 0.05 deg，606C=1，机械速度 -0.6 deg/s，阈值 5 deg/s，保持参考 63 inc，无已规划运动参数
+1795585975.605245 Node 8 最近反馈，实际 0 mm (0 inc)，目标 0 mm (0 inc)，误差 +0 mm，位置阈值 0.005 mm，606C=0，机械速度 0 mm/s，阈值 1 mm/s，保持参考 0 inc，无已规划运动参数
+1795585975.605255 PP 规划失败: Node 6 整数轮廓不可行（编码分辨率），T=10 s，容差 0.1 s，整数时间范围 [0.024705294, 0.8558165] s，最佳 理论 V/A/B=0.014648438/0.005859375/0.005859375，6081/6083/6084=1/1/1，预计 0.8558165 s，时间误差 -9.1441835 s
+Node 6 实际 -1.3842773 deg (63 inc)，目标 -1.2744141 deg (58 inc)，误差 -0.10986328 deg，位置阈值 0.05 deg，606C=1，机械速度 -0.6 deg/s，阈值 5 deg/s
+1795585975.605469 MOVE out T=3 s {"1": 514.4393310546875, "2": 514.343994140625, "3": 314.2787170410156, "4": 2.378509521484375, "6": 0.28564453125, "8": 0}
+1795585979.206273 触发 SYNC 1795585976.006603，T=3 s，t=0.25 s
+1795585979.206317 Node 1 起动 0.2955 s，到位 2.7956 s，相对 T 偏差 -0.2044 s，理论 V/A/B=0.18184038/0.72736151/0.72736151，6081/6083/6084=16270/65/65，预计 3.0004432 s，时间误差 +0.00044315635 s
+1795585979.206327 Node 4 起动 0.4965 s，到位 2.6962 s，相对 T 偏差 -0.3038 s，理论 V/A/B=0.18170721/0.72682884/0.72682884，6081/6083/6084=65035/260/260，预计 3.0001576 s，时间误差 +0.00015758763 s
+1795585979.206400 Node 6 起动 0.2959 s，到位 2.9960 s，相对 T 偏差 -0.0040 s，理论 V/A/B=0.61523438/2.4609375/2.4609375，6081/6083/6084=1/4/4，预计 3.0698242 s，时间误差 +0.069824219 s
+1795585979.206409 到位时间差 0.2998 s
+1795585979.206430 PP Motion Completed，运动节点 [1, 4, 6]，保持节点 [2, 3, 8]。在线节点保持使能。
+1795585979.206909 Link    Node  Motor  Statusword  CiA402 State       6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4637      Operation Enabled  1     514.440 mm  -679187   0.012 mm/s    -1056
+ONLINE  2     Kinco  0x4637      Operation Enabled  1     514.343 mm  2481265   -0.019 mm/s   -1664
+ONLINE  3     Kinco  0x4637      Operation Enabled  1     314.279 mm  2598822   -0.009 mm/s   992
+ONLINE  4     Kinco  0x4637      Operation Enabled  1     2.378 deg   -4616829  -0.007 deg/s  2624
+ONLINE  6     RS00   0x0037      Operation Enabled  1     0.264 deg   -12       -0.600 deg/s  1
+ONLINE  8     EL05   0x0037      Operation Enabled  1     0.000 mm    0         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795585979.206953 MOVE return T=3 s {"1": 513.9393310546875, "2": 514.343994140625, "3": 314.2787170410156, "4": 2.878509521484375, "6": -1.38427734375, "8": 0}
+1795585979.605902 PP 异常，已锁定后续运动，执行整组失能。
+1795585979.905025 TPDO1 已确认全部在线节点 Switch On Disabled
+1795585979.905186 Node 1 最近反馈，实际 514.43939 mm (-679185 inc)，目标 513.93933 mm (-676454 inc)，误差 +0.50006104 mm，位置阈值 0.02 mm，606C=0，机械速度 0 mm/s，阈值 1 mm/s，保持参考 -679185 inc，理论 V/A/B=0.18190696/0.72762784/0.72762784，6081/6083/6084=16276/65/65，预计 3.0005283 s，时间误差 +0.00052828705 s
+1795585979.905269 Node 2 最近反馈，实际 514.34344 mm (2481266 inc)，目标 514.34399 mm (2481269 inc)，误差 -0.00054931641 mm，位置阈值 0.02 mm，606C=-1280，机械速度 -0.014305115 mm/s，阈值 1 mm/s，保持参考 2481267 inc，无已规划运动参数
+1795585979.905345 Node 3 最近反馈，实际 314.27857 mm (2598822 inc)，目标 314.27872 mm (2598821 inc)，误差 -0.0001449585 mm，位置阈值 0.02 mm，606C=3168，机械速度 -0.028029084 mm/s，阈值 1 mm/s，保持参考 2598815 inc，无已规划运动参数
+1795585979.905424 Node 4 最近反馈，实际 2.3784485 deg (-4616835 inc)，目标 2.8785095 deg (-4627759 inc)，误差 -0.50006104 deg，位置阈值 0.05 deg，606C=4672，机械速度 -0.013053417 deg/s，阈值 5 deg/s，保持参考 -4616836 inc，理论 V/A/B=0.18187367/0.72749467/0.72749467，6081/6083/6084=65095/260/260，预计 3.0003705 s，时间误差 +0.00037051558 s
+1795585979.905499 Node 6 最近反馈，实际 0.28564453 deg (-13 inc)，目标 -1.3842773 deg (63 inc)，误差 +1.6699219 deg，位置阈值 0.05 deg，606C=-4，机械速度 2.4 deg/s，阈值 5 deg/s，保持参考 -13 inc，理论 V/A/B=0.60724432/2.4289773/2.4289773，6081/6083/6084=1/4/4，预计 3.0332031 s，时间误差 +0.033203125 s
+1795585979.905552 Node 8 最近反馈，实际 0 mm (0 inc)，目标 0 mm (0 inc)，误差 +0 mm，位置阈值 0.005 mm，606C=0，机械速度 0 mm/s，阈值 1 mm/s，保持参考 0 inc，无已规划运动参数
+1795585979.905843 FINAL Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity     Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     514.402 mm  -678982   -0.005 mm/s  448
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.336 mm  2481226   0.005 mm/s   416
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.282 mm  2598798   -0.043 mm/s  4832
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.380 deg   -4616861  0.007 deg/s  -2560
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     0.242 deg   -11       0.000 deg/s  0
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    1         0.000 mm/s   0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+Traceback (most recent call last):
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/mixed/run_test.py", line 123, in <module>
+    run()
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/mixed/run_test.py", line 104, in run
+    c.pp_move(as_targets(dest))
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/controller.py", line 35, in run
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/controller.py", line 270, in pp_move
+    trajectory = motion.run(targets)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/motion.py", line 289, in run
+    clear = self.load_and_trigger(axes)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/motion.py", line 261, in load_and_trigger
+    samples = self.wait("参数装载", loaded, monotonic() + config.PP_ACK_TIMEOUT,
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/motion.py", line 73, in wait
+    raise ControlError(f"{stage} 缺少批次 SYNC 对应周期的完整反馈：{missing}")
+canopen_pp.drives.ControlError: 参数装载 缺少批次 SYNC 对应周期的完整反馈：Node 4

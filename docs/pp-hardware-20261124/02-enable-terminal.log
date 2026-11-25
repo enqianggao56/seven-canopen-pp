@@ -1,0 +1,52 @@
+1795585891.032861 INIT allowed=(1, 2, 3, 4, 6, 8)
+1795585892.595453 Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity     Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     513.902 mm  -676248   0.013 mm/s   -1120
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.359 mm  2481351   -0.013 mm/s  -1120
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.272 mm  2598865   0.013 mm/s   -1472
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.874 deg   -4627661  0.007 deg/s  -2592
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     -1.494 deg  68        0.000 deg/s  0
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    0         0.000 mm/s   0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795585892.595609 ENABLE
+1795585892.794136 0x0006 → Ready to Switch On  N1=0x4231 N2=0x4231 N3=0x4231 N4=0x4231 N6=0x0031 N8=0x0031
+1795585892.993692 0x0007 → Switched On  N1=0x4233 N2=0x4233 N3=0x4233 N4=0x4233 N6=0x0033 N8=0x0033
+1795585893.293891 0x000F → Operation Enabled  N1=0x4637 N2=0x4237 N3=0x4637 N4=0x4637 N6=0x0037 N8=0x0037
+1795585893.294159 HOLD {"1": 513.9014282226562, "2": 514.2022705078125, "3": 314.2704544067383, "4": 2.872650146484375, "6": -1.47216796875, "8": 0}
+1795585893.597871 PP 异常，已锁定后续运动，执行整组失能。
+1795585893.894483 TPDO1 已确认全部在线节点 Switch On Disabled
+1795585893.894626 Node 1 最近反馈，实际 513.90143 mm (-676247 inc)，目标 513.90143 mm (-676247 inc)，误差 +0 mm，位置阈值 0.02 mm，606C=1632，机械速度 -0.018239021 mm/s，阈值 1 mm/s，保持参考 -676247 inc，无已规划运动参数
+1795585893.894701 Node 2 最近反馈，实际 514.35974 mm (2481355 inc)，目标 514.20227 mm (2480495 inc)，误差 +0.1574707 mm，位置阈值 0.02 mm，606C=4096，机械速度 0.045776367 mm/s，阈值 1 mm/s，保持参考 2481355 inc，理论 V/A/B=0.069986979/0.093315972/0.093315972，6081/6083/6084=6262/8/8，预计 3.0328682 s，时间误差 +0.032868173 s
+1795585893.894776 Node 3 最近反馈，实际 314.27161 mm (2598870 inc)，目标 314.27045 mm (2598878 inc)，误差 +0.001159668 mm，位置阈值 0.02 mm，606C=-1280，机械速度 0.011324883 mm/s，阈值 1 mm/s，保持参考 2598870 inc，无已规划运动参数
+1795585893.894839 Node 4 最近反馈，实际 2.8741608 deg (-4627664 inc)，目标 2.8726501 deg (-4627631 inc)，误差 +0.0015106201 deg，位置阈值 0.05 deg，606C=-6176，机械速度 0.017255545 deg/s，阈值 5 deg/s，保持参考 -4627664 inc，无已规划运动参数
+1795585893.894896 Node 6 最近反馈，实际 -1.472168 deg (67 inc)，目标 -1.472168 deg (67 inc)，误差 +0 deg，位置阈值 0.05 deg，606C=3，机械速度 -1.8 deg/s，阈值 5 deg/s，保持参考 67 inc，无已规划运动参数
+1795585893.894947 Node 8 最近反馈，实际 0 mm (0 inc)，目标 0 mm (0 inc)，误差 +0 mm，位置阈值 0.005 mm，606C=0，机械速度 0 mm/s，阈值 1 mm/s，保持参考 0 inc，无已规划运动参数
+1795585893.895209 FINAL Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     513.901 mm  -676246   -0.007 mm/s   608
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.351 mm  2481306   -0.014 mm/s   -1280
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.276 mm  2598839   0.015 mm/s    -1728
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.876 deg   -4627708  -0.008 deg/s  2976
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     -1.472 deg  67        0.000 deg/s   0
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    0         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+Traceback (most recent call last):
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/six/run_test.py", line 110, in <module>
+    run()
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/six/run_test.py", line 81, in run
+    c.pp_move(as_targets(origin))
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/controller.py", line 35, in run
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/controller.py", line 270, in pp_move
+    trajectory = motion.run(targets)
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/motion.py", line 289, in run
+    clear = self.load_and_trigger(axes)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/hq/two_arm/canopen_seven_pp/canopen_pp/motion.py", line 259, in load_and_trigger
+    loaded = self.clock.batch(frames, guard=self.guard)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/pp-hardware-exclude5-KjQIu4Jw/six/run_test.py", line 56, in bounded_batch
+    raise ControlError(f"阻止 {stage} 阶段的 Node {n} 参数装载")
+canopen_pp.drives.ControlError: 阻止 hold 阶段的 Node 2 参数装载

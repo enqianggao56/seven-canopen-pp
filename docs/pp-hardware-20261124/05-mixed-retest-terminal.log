@@ -1,0 +1,61 @@
+1795586278.027626 INIT allowed=(1, 2, 3, 4, 6, 8)
+1795586279.928561 Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     514.402 mm  -678980   0.010 mm/s    -864
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.336 mm  2481225   -0.006 mm/s   -512
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.282 mm  2598795   -0.034 mm/s   3872
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.380 deg   -4616863  -0.005 deg/s  1664
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     0.242 deg   -11       3.000 deg/s   -5
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    1         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795586280.628755 使能前连续 5 个 SYNC 周期已收齐六轴反馈
+1795586280.628999 ENABLE
+1795586280.829956 0x0006 → Ready to Switch On  N1=0x4231 N2=0x4231 N3=0x4231 N4=0x4231 N6=0x0031 N8=0x0031
+1795586281.032797 0x0007 → Switched On  N1=0x4233 N2=0x4233 N3=0x4233 N4=0x4233 N6=0x0033 N8=0x0033
+1795586281.328727 0x000F → Operation Enabled  N1=0x4637 N2=0x4237 N3=0x4637 N4=0x4637 N6=0x0037 N8=0x0037
+1795586281.630369 HOLD {"1": 514.40185546875, "2": 514.3368530273438, "3": 314.28277587890625, "4": 2.379730224609375, "6": 0.19775390625, "8": 0.0001220703125}
+1795586281.828957 在线节点均在目标窗口内，本次定位无需位移。
+1795586281.829169 MOVE out T=3 s {"1": 514.90185546875, "2": 514.3368530273438, "3": 314.28277587890625, "4": 1.879730224609375, "6": 1.86767578125, "8": 0.0001220703125}
+1795586285.428010 触发 SYNC 1795586282.230992，T=3 s，t=0.333333 s
+1795586285.428038 Node 1 起动 0.2947 s，到位 2.7944 s，相对 T 偏差 -0.2056 s，理论 V/A/B=0.18752289/0.56256866/0.56256866，6081/6083/6084=16779/50/50，预计 3.0022886 s，时间误差 +0.0022886239 s
+1795586285.428047 Node 4 起动 0.4957 s，到位 2.5948 s，相对 T 偏差 -0.4052 s，理论 V/A/B=0.18754005/0.56262016/0.56262016，6081/6083/6084=67123/201/201，预计 3.0006199 s，时间误差 +0.00061988591 s
+1795586285.428054 Node 6 起动 0.2951 s，到位 2.9947 s，相对 T 偏差 -0.0053 s，理论 V/A/B=0.60974121/1.8292236/1.8292236，6081/6083/6084=1/3/3，预计 3.0432943 s，时间误差 +0.043294271 s
+1795586285.428061 到位时间差 0.3999 s
+1795586285.428079 PP Motion Completed，运动节点 [1, 4, 6]，保持节点 [2, 3, 8]。在线节点保持使能。
+1795586285.428348 Link    Node  Motor  Statusword  CiA402 State       6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4637      Operation Enabled  1     514.902 mm  -681714   -0.102 mm/s   9152
+ONLINE  2     Kinco  0x4637      Operation Enabled  1     514.336 mm  2481227   0.050 mm/s    4448
+ONLINE  3     Kinco  0x4637      Operation Enabled  1     314.283 mm  2598794   0.021 mm/s    -2400
+ONLINE  4     Kinco  0x4637      Operation Enabled  1     1.879 deg   -4605933  -0.017 deg/s  5952
+ONLINE  6     RS00   0x0037      Operation Enabled  1     1.846 deg   -84       -2.400 deg/s  4
+ONLINE  8     EL05   0x0037      Operation Enabled  1     0.000 mm    0         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795586285.428375 MOVE return T=3 s {"1": 514.40185546875, "2": 514.3368530273438, "3": 314.28277587890625, "4": 2.379730224609375, "6": 0.19775390625, "8": 0.0001220703125}
+1795586288.927603 触发 SYNC 1795586285.831847，T=3 s，t=0.333333 s
+1795586288.927632 Node 1 起动 0.2952 s，到位 2.7947 s，相对 T 偏差 -0.2053 s，理论 V/A/B=0.18759155/0.56277466/0.56277466，6081/6083/6084=16785/50/50，预计 3.0024315 s，时间误差 +0.0024314864 s
+1795586288.927642 Node 4 起动 0.4946 s，到位 2.5939 s，相对 T 偏差 -0.4061 s，理论 V/A/B=0.18757439/0.56272316/0.56272316，6081/6083/6084=67135/201/201，预计 3.000691 s，时间误差 +0.00069102562 s
+1795586288.927652 Node 6 起动 0.3954 s，到位 2.8939 s，相对 T 偏差 -0.1061 s，理论 V/A/B=0.61798096/1.8539429/1.8539429，6081/6083/6084=1/3/3，预计 3.0799154 s，时间误差 +0.079915365 s
+1795586288.927671 到位时间差 0.3000 s
+1795586288.927690 PP Motion Completed，运动节点 [1, 4, 6]，保持节点 [2, 3, 8]。在线节点保持使能。
+1795586288.927954 Link    Node  Motor  Statusword  CiA402 State       6061  Position    Raw(inc)  Velocity     Vel(raw)
+ONLINE  1     Kinco  0x4637      Operation Enabled  1     514.401 mm  -678977   -0.004 mm/s  320
+ONLINE  2     Kinco  0x4637      Operation Enabled  1     514.336 mm  2481225   -0.089 mm/s  -7968
+ONLINE  3     Kinco  0x4637      Operation Enabled  1     314.282 mm  2598795   -0.052 mm/s  5920
+ONLINE  4     Kinco  0x4637      Operation Enabled  1     2.380 deg   -4616872  0.001 deg/s  -192
+ONLINE  6     RS00   0x0037      Operation Enabled  1     0.176 deg   -8        0.000 deg/s  0
+ONLINE  8     EL05   0x0037      Operation Enabled  1     0.000 mm    0         0.000 mm/s   0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
+1795586288.927961 MEASUREMENTS COMPLETE
+1795586288.927964 DISABLE
+1795586289.229575 TPDO1 已确认全部在线节点 Switch On Disabled
+1795586289.229956 FINAL Link    Node  Motor  Statusword  CiA402 State        6061  Position    Raw(inc)  Velocity      Vel(raw)
+ONLINE  1     Kinco  0x4270      Switch On Disabled  0     514.430 mm  -679136   -0.007 mm/s   608
+ONLINE  2     Kinco  0x4270      Switch On Disabled  0     514.329 mm  2481186   0.057 mm/s    5088
+ONLINE  3     Kinco  0x4270      Switch On Disabled  0     314.286 mm  2598774   0.001 mm/s    -160
+ONLINE  4     Kinco  0x4270      Switch On Disabled  0     2.381 deg   -4616885  0.000 deg/s   0
+ONLINE  6     RS00   0x0040      Switch On Disabled  1     0.176 deg   -8        -2.400 deg/s  4
+ONLINE  8     EL05   0x0040      Switch On Disabled  1     0.000 mm    1         0.000 mm/s    0
+ONLINE: 1, 2, 3, 4, 6, 8
+OFFLINE: 无
