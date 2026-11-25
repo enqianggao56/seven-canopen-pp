@@ -5,47 +5,47 @@
   "axes": {
     "1": {
       "position": 0.0,
-      "velocity": 100.0,
-      "acceleration": 100.0,
-      "deceleration": 100.0
+      "velocity": 300.0,
+      "acceleration": 300.0,
+      "deceleration": 300.0
     },
     "2": {
-      "position": 8.0,
-      "velocity": 10.0,
-      "acceleration": 10.0,
-      "deceleration": 10.0
+      "position": 400.0,
+      "velocity": 300.0,
+      "acceleration": 300.0,
+      "deceleration": 300.0
     },
     "3": {
-      "position": 11.0,
-      "velocity": 10.0,
-      "acceleration": 10.0,
-      "deceleration": 10.0
+      "position": 300.0,
+      "velocity": 300.0,
+      "acceleration": 300.0,
+      "deceleration": 300.0
     },
     "4": {
-      "position": 0.0,
+      "position": 2.5,
       "velocity": 5.0,
       "acceleration": 10.0,
       "deceleration": 10.0
     },
     "5": {
-      "position": 121.0,
-      "velocity": 5.0,
-      "acceleration": 10.0,
-      "deceleration": 10.0,
+      "position": 0.0,
+      "velocity": 45.0,
+      "acceleration": 45.0,
+      "deceleration": 45.0,
       "torque_per_mille": 600
     },
     "6": {
-      "position": 69.0,
-      "velocity": 5.0,
-      "acceleration": 10.0,
-      "deceleration": 10.0,
+      "position": 0.0,
+      "velocity": 45.0,
+      "acceleration": 45.0,
+      "deceleration": 45.0,
       "torque_per_mille": 500
     },
     "7": {
-      "position": 18.0,
-      "velocity": 5.0,
-      "acceleration": 10.0,
-      "deceleration": 10.0,
+      "position": 0.0,
+      "velocity": 45.0,
+      "acceleration": 45.0,
+      "deceleration": 45.0,
       "torque_per_mille": 700
     },
     "8": {
