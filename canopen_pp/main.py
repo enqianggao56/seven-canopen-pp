@@ -64,7 +64,10 @@ def main():
                     print(controller.status())
                 elif cmd == "disable":
                     controller.disable()
-                elif cmd in ("enable", "pp-move", "move-test"):
+                elif cmd == "enable":
+                    controller.enable()
+                    print(f"使能成功，在线节点 {list(controller.online_nodes)}")
+                elif cmd in ("pp-move", "move-test"):
                     try:
                         targets = load_targets(CONFIG_PATH, nodes=controller.online_nodes)
                     except (OSError, ValueError, RecursionError) as exc:
@@ -72,11 +75,8 @@ def main():
                     if cmd == "pp-move":
                         print(f"已读取 {CONFIG_PATH}，使用本次在线节点定位参数")
                         controller.pp_move(targets)
-                    elif cmd == "move-test":
-                        controller.move_test(targets)
                     else:
-                        controller.enable(targets)
-                        print(f"使能成功，在线节点 {list(controller.online_nodes)}")
+                        controller.move_test(targets)
             except ControlError as exc:
                 print(f"{cmd} 失败: {exc}", file=sys.stderr)
                 if (cmd == "init" and controller is not None and not controller.initialized

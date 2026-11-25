@@ -37,6 +37,10 @@ _PROFILE_SCALES = {"Kinco": _KINCO_PROFILE, "RS06": _ROBSTRIDE_PROFILE,
 _U32_MAX = (1 << 32) - 1
 
 
+class BelowProfileResolution(ValueError):
+    """A positive engineering value rounds down to zero counts."""
+
+
 def _encode_rate(node: int, field: str, value: float, limit: int, scale: Fraction) -> int:
     if (isinstance(value, bool) or not isinstance(value, (int, float))
             or isinstance(value, float) and not isfinite(value)):
@@ -49,7 +53,7 @@ def _encode_rate(node: int, field: str, value: float, limit: int, scale: Fractio
         raise ValueError(f"Node {node} 的 {field} 超出 U32 范围")
     raw = floor(exact)
     if raw == 0:
-        raise ValueError(f"Node {node} 的 {field} 小于一个原始计数")
+        raise BelowProfileResolution(f"Node {node} 的 {field} 小于一个原始计数")
     return raw
 
 
@@ -57,8 +61,7 @@ class PPEncoder:
     def __init__(self, converter: MechanicalConverter | None = None) -> None:
         self.converter = MechanicalConverter() if converter is None else converter
 
-    def encode(self, command: PPCommand) -> PPParameters:
-        node = command.node_id
+    def profile_scales(self, node: int) -> tuple[Fraction, Fraction]:
         if isinstance(node, bool) or not isinstance(node, int) or node not in PP_DESIGN_LIMITS:
             raise UnknownAxisError("PP 命令的 Node ID 必须为 1–8 的整数")
         cfg = self.converter.get_config(node)
@@ -66,18 +69,25 @@ class PPEncoder:
         if (cfg.device_type != installed.device_type or cfg.unit != installed.unit
                 or cfg.reference_axis != installed.reference_axis):
             raise InvalidMechanicalConfigError(f"Node {node} 的设备、单位或参考轴与 PP 配置不符")
-        target = self.converter.target_to_raw(node, command.target_position)
-        if command.target_position != 0 and target == cfg.zero_offset:
-            raise ValueError(f"Node {node} 的 target_position 量化后落在机械零点")
+        travel = Fraction(str(cfg.travel_per_revolution))
+        v, a = _PROFILE_SCALES[cfg.device_type]
+        return v / travel, a / travel
 
-        k = cfg.travel_per_revolution
-        travel = Fraction(str(k)) if isinstance(k, float) else Fraction(k)
-        velocity_scale, acceleration_scale = _PROFILE_SCALES[cfg.device_type]
+    def target_count(self, node, position):
+        target = self.converter.target_to_raw(node, position)
+        if position != 0 and target == self.converter.get_config(node).zero_offset:
+            raise ValueError(f"Node {node} 的 target_position 量化后落在机械零点")
+        return target
+
+    def encode(self, command: PPCommand) -> PPParameters:
+        node = command.node_id
+        velocity_scale, acceleration_scale = self.profile_scales(node)
+        target = self.target_count(node, command.target_position)
         limits = PP_DESIGN_LIMITS[node]
         velocity = _encode_rate(node, "velocity", command.velocity, limits.velocity,
-                                velocity_scale / travel)
+                                velocity_scale)
         acceleration = _encode_rate(node, "acceleration", command.acceleration,
-                                    limits.acceleration, acceleration_scale / travel)
+                                    limits.acceleration, acceleration_scale)
         deceleration = _encode_rate(node, "deceleration", command.deceleration,
-                                    limits.deceleration, acceleration_scale / travel)
+                                    limits.deceleration, acceleration_scale)
         return PPParameters(target, velocity, acceleration, deceleration)

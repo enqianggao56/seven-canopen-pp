@@ -1,3 +1,4 @@
+from collections import deque
 from dataclasses import dataclass, replace
 import struct
 from threading import Lock
@@ -114,6 +115,7 @@ class Sample:
     vel: int = 0
     tp1: float = 0.0  # bus timestamps for command barriers
     tp2: float = 0.0
+    sequence: int = 0  # SYNC sequence of TPDO1, for consecutive-cycle confirmation
     cycle1: float = 0.0  # wire timestamp of the preceding master SYNC
     cycle2: float = 0.0
     received1: float = float("-inf")  # independent monotonic freshness
@@ -128,13 +130,20 @@ class Feedback:
         self.samples = {n: Sample() for n in drives}
         self.lock = Lock()
         self.sync_stamp = 0.0
+        self.sequence = 0
+        # Keep recent wire samples for timed PP if the waiting thread misses a poll.
+        self.history = deque(maxlen=32)
         for n, drive in drives.items():
             for slot in slots(drive)[3:]:
                 network.subscribe(slot.cob, self.receiver(n, slot))
 
     def sync(self, stamp):
         with self.lock:
+            if self.sync_stamp:
+                closed = {n: replace(s) for n, s in self.samples.items()}
+                self.history.append((self.sequence, self.sync_stamp, closed))
             self.sync_stamp = stamp
+            self.sequence += 1
 
     def receiver(self, n, slot):
         def update(cob, data, stamp):
@@ -151,6 +160,7 @@ class Feedback:
                         s.received2 = float("-inf")
                     return
                 if first:
+                    s.sequence = self.sequence
                     s.cycle1 = self.sync_stamp
                     s.word, s.pos, s.mode = struct.unpack(slot.fmt, data)
                     s.tp1, s.received1 = stamp, received
@@ -163,7 +173,13 @@ class Feedback:
     def reset(self):
         with self.lock:
             self.sync_stamp = 0.0
+            self.history.clear()
             self.samples = {n: Sample() for n in self.samples}
+
+    def closed_cycles(self, first, last, nodes):
+        with self.lock:
+            return [(seq, stamp, {n: samples[n] for n in nodes})
+                    for seq, stamp, samples in self.history if first <= seq <= last]
 
     def snapshot(self, nodes=None):
         with self.lock:

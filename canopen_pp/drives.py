@@ -57,7 +57,7 @@ class RobStride(Drive):
         if word == self.disable_word:
             torque_per_mille = 0
         elif type(torque_per_mille) is not int or not 1 <= torque_per_mille <= 1000:
-            raise ControlError(f"Node {self.id} 需要有效的 JSON 力矩上限（1–1000‰）")
+            raise ControlError(f"Node {self.id} 需要有效的力矩上限（1–1000‰）")
         return self.control_struct.pack(word, 1, torque_per_mille)
 
 

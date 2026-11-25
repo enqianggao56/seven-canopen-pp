@@ -9,11 +9,11 @@ from . import config
 from .communication import SdoTimeout, SyncClock
 from .drives import ControlError, state
 from .mechanical import MechanicalConversionError, MechanicalConverter
-from .motion import PPMotion
+from .motion import PlanningError, PPMotion
 from .move_test import batch_report, prepare
 from .pdo import Feedback, check_unused_slots, configure_slot, slots, verify_slot
 from .pp import PPEncoder
-from .pp_config import load_targets
+from .trajectory import plan
 
 DISABLED = "Switch On Disabled"
 READY = "Ready to Switch On"
@@ -59,6 +59,7 @@ class Controller:
         self.offline_nodes = set()
         self.pp_enabled = False
         self.completed_positions = None
+        self.triggered_nodes = set()
         self.pp_inhibited = False
         self.needs_disable = False
 
@@ -94,6 +95,7 @@ class Controller:
             raise ControlError("NMT Start 未完成，无法确认安全失能")
         self.initialized = False
         self.completed_positions = None
+        self.triggered_nodes = set()
         self.online_drives.clear()
         self.offline_nodes.clear()
         self.feedback.reset()
@@ -202,11 +204,13 @@ class Controller:
         return "\n".join(lines + errors)
 
     def guard(self, required):
-        for n, s in self.feedback.snapshot(self.online_nodes).items():
+        samples = self.feedback.snapshot(self.online_nodes)
+        for n, s in samples.items():
             if (not s.fresh(config.FEEDBACK_TIMEOUT) or state(s.word) != required
                     or s.cycle1 != self.feedback.sync_stamp or s.cycle2 != s.cycle1):
                 raise ControlError(f"Node {n} 阶段预检失败，6041=0x{s.word:04X} "
                                    f"({state(s.word)}) 或上一周期 TPDO 不完整")
+        return samples
 
     def frames(self, control=None, torques=None):
         frames = []
@@ -223,12 +227,7 @@ class Controller:
             raise ControlError("请先 init")
         if self.pp_inhibited:
             raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
-        try:
-            targets = load_targets(nodes=self.online_nodes) if targets is None else targets
-            targets.encode(PPEncoder(self.mechanical), self.online_nodes)
-        except (OSError, ValueError) as exc:
-            raise ControlError(f"PP 配置错误: {exc}") from exc
-        torques = {a.command.node_id: a.torque_per_mille for a in targets.selected(self.online_nodes)}
+        torques = {n: config.PP_TORQUE_PER_MILLE.get(n) for n in self.online_nodes}
         try:
             samples = self.wait_feedback(self.online_nodes, description="使能前反馈", both=True)
             if self.pp_enabled and all(state(s.word) == ENABLED and s.mode == 1 for s in samples.values()):
@@ -266,42 +265,48 @@ class Controller:
             raise ControlError("PP 运动已锁定，请排除异常并确认 disable 后重新使能")
         if not self.pp_enabled:
             raise ControlError("请先 enable")
+        motion = PPMotion(self)
         try:
-            axes = prepare(targets, self.online_drives, PPEncoder(self.mechanical), control=0x000F)
-        except ValueError as exc:
-            raise ControlError(f"PP 配置错误: {exc}") from exc
-        motion = PPMotion(self, axes)
-        torques = {a.target.command.node_id: a.target.torque_per_mille for a in axes}
-        trigger = self.frames(0x001F, torques)
-        clear = [a.frames[2] for a in axes]
-        try:
-            already_in_window = motion.run(trigger, clear)
+            trajectory = motion.run(targets)
+        except PlanningError:
+            raise
         except BaseException:
             self.abort_motion()
             raise
-        self.completed_positions = {a.target.command.node_id: a.params.target_position for a in axes}
-        if already_in_window:
-            self.report("在线节点在触发前已位于本次到位窗口内，本次定位无需位移。")
-        group = "Eight Axis" if len(axes) == len(config.AXIS_CONFIG) else f"{len(axes)} Axis"
-        self.report(f"{group} PP Motion Completed\n\n" + "\n".join(
-            f"Node {n}: Completed" for n in self.online_drives)
-            + "\n\nAll participating axes remain Operation Enabled.\nReady for next pp-move.")
+        finally:
+            motion.report_timing(targets.duration_s)
+        self.completed_positions = trajectory.positions
+        self.triggered_nodes.update(trajectory.moving)
+        if trajectory.moving:
+            self.report(f"PP Motion Completed，运动节点 {list(trajectory.moving)}，"
+                        f"保持节点 {sorted(self.online_nodes - trajectory.moving.keys())}。在线节点保持使能。")
 
     @exclusive_command
     def move_test(self, targets):
         if not self.initialized:
             raise ControlError("请先 init")
         try:
-            axes = prepare(targets, self.online_drives, PPEncoder(self.mechanical))
+            baseline = self.wait_feedback(self.online_nodes, description="失能测试预检",
+                                          target=DISABLED, both=True)
+            encoder = PPEncoder(self.mechanical)
+            trajectory = plan(targets, baseline, encoder)
+            axes = prepare(trajectory, self.online_drives, encoder)
         except ValueError as exc:
             raise ControlError(f"PP 配置错误: {exc}") from exc
+        if not axes:
+            self.report("全部在线节点已在目标窗口内，保持失能，无需参数批次。")
+            return
+
+        def guard():
+            trajectory.check_start(encoder, baseline, self.guard(DISABLED))
+
         frames = tuple(axis.frames[i] for i in range(3) for axis in axes)
         echoes = []
         samples = None
         try:
             self.guard(DISABLED)
             self.needs_disable = True
-            stamp = self.clock.batch(frames, guard=lambda: self.guard(DISABLED), echoes=echoes)
+            stamp = self.clock.batch(frames, guard=guard, echoes=echoes)
             samples = self.wait_feedback(self.online_nodes, description="批次后失能确认", since=stamp,
                                          target=DISABLED, both=True, exact_cycle=True)
         except ControlError as exc:
@@ -326,6 +331,7 @@ class Controller:
     def _disable_group(self):
         self.pp_enabled = False
         self.completed_positions = None
+        self.triggered_nodes = set()
         if self.clock.thread.ident is None:
             raise ControlError("Disable not confirmed，SYNC 尚未运行")
         self.needs_disable = True

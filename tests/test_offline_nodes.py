@@ -8,7 +8,7 @@ import pytest
 from canopen_pp import config, main as terminal
 from canopen_pp.controller import AllNodesOffline
 from canopen_pp.drives import ControlError
-from canopen_pp.pp_config import CONFIG_PATH, load_targets
+from canopen_pp.pp_config import load_targets
 from test_pp_motion import rpdo_batches
 from test_virtual import SimDrive, system
 
@@ -50,9 +50,7 @@ def test_only_online_nodes_participate(system, tmp_path):
         assert requests == [bytes.fromhex("40 18 10 01")]  # identity probe only
     assert [data[1] for cob, data in trace if cob == 0 and data[0] == 1] == nodes
 
-    doc = json.loads(CONFIG_PATH.read_text())
-    for n, row in doc["axes"].items():
-        row["position"] = 12000 if int(n) in missing else 1
+    doc = {"duration_s": 4, "axes": {str(n): 12000 if n in missing else 12 for n in c.drives}}
     path = tmp_path / "targets.json"
     path.write_text(json.dumps(doc))
     targets = load_targets(path, nodes=c.online_nodes)
@@ -71,7 +69,7 @@ def test_only_online_nodes_participate(system, tmp_path):
         load, controls, controls, controls, load, controls, controls, controls]
     assert all([data[0] for _, data in batch] == [cw]*len(nodes)
                for batch, cw in zip(batches[5:7], (31, 15), strict=True))
-    assert all(s.pos == c.mechanical.target_to_raw(n, 1) for n, s in sims.items())
+    assert all(s.pos == c.mechanical.target_to_raw(n, 12) for n, s in sims.items())
     assert all(s.word == 0x40 for s in sims.values())
     expected_tpdos = [base+n for base in (0x180, 0x280) for n in nodes]
     for _, _, stamp in sims[nodes[0]].frames[:-1]:  # exclude the final disable before close
@@ -89,7 +87,7 @@ def test_all_offline(system):
 
 
 @pytest.mark.parametrize("system", [[2]], indirect=True)
-def test_reconnect_requires_safe_reinit(system, monkeypatch):
+def test_reconnect_requires_safe_reinit(system, monkeypatch, wire_targets):
     c, sims, trace, _ = system
     c.parameter_test_only = False
     c.initialize()
@@ -112,7 +110,7 @@ def test_reconnect_requires_safe_reinit(system, monkeypatch):
 
     with monkeypatch.context() as m:
         m.setattr(c.bus, "transmit", rescan_during_move)
-        c.pp_move(load_targets())
+        c.pp_move(wire_targets)
     assert attempts == [0x402]
     assert c.online_nodes == {2} and not recovered.frames
     assert not any(cob == 0 or cob >= 0x600 for cob, _ in trace)
@@ -122,12 +120,12 @@ def test_reconnect_requires_safe_reinit(system, monkeypatch):
     assert not old_clock.thread.is_alive() and c.clock.thread.is_alive()
     assert c.online_nodes == {2, 8} and 8 not in c.offline_nodes
     c.enable()
-    c.pp_move(load_targets())
+    c.pp_move(wire_targets)
     assert [cw for cw, _, _ in recovered.frames] == [6, 7, 15, 15, 31, 15]
 
 
 @pytest.mark.parametrize("system", [[2, 5]], indirect=True)
-def test_loss_after_trigger_latches_group_fault(system, monkeypatch):
+def test_loss_after_trigger_latches_group_fault(system, monkeypatch, wire_targets):
     c, sims, trace, _ = system
     c.parameter_test_only = False
     c.initialize()
@@ -142,7 +140,7 @@ def test_loss_after_trigger_latches_group_fault(system, monkeypatch):
     monkeypatch.setattr(c.bus, "transmit", lose_tpdo)
     trace.clear()
     with pytest.raises(ControlError, match="Node 2"):
-        c.pp_move(load_targets())
+        c.pp_move(wire_targets)
     assert c.pp_inhibited and c.online_nodes == {2, 5} and 2 not in c.offline_nodes
     assert rpdo_batches(trace)[-1] == [(0x402, bytes.fromhex("00 00 01")),
                                        (0x405, bytes.fromhex("01 00 01 00 00"))]
@@ -188,9 +186,9 @@ def test_terminal_all_offline_status_and_retry(system, monkeypatch, capsys, tmp_
     c.parameter_test_only = False
     monkeypatch.setattr(config, "PARAMETER_TEST_ONLY", False)
     path = tmp_path / "targets.json"
-    doc = json.loads(CONFIG_PATH.read_text())
-    doc["axes"]["1"]["position"] = 12345  # outside the travel of this offline axis
-    doc["axes"]["5"]["position"] = 1
+    doc = {"duration_s": 4, "axes": {str(n): 0 for n in c.drives}}
+    doc["axes"]["1"] = 12345  # outside the travel of this offline axis
+    doc["axes"]["5"] = 12
     path.write_text(json.dumps(doc))
     monkeypatch.setattr(terminal, "CONFIG_PATH", path)
     monkeypatch.setattr(terminal, "open_controller", lambda *args: c)
@@ -205,16 +203,16 @@ def test_terminal_all_offline_status_and_retry(system, monkeypatch, capsys, tmp_
         assert len(sims[5].frames) == 1
         yield "enable"
         yield "pp-move"
-        assert sims[5].pos == c.mechanical.target_to_raw(5, 1)
+        assert sims[5].pos == c.mechanical.target_to_raw(5, 12)
         trace.clear()
-        doc["axes"]["5"]["position"] = 12345
+        doc["axes"]["5"] = 12345
         path.write_text(json.dumps(doc))
         yield "pp-move"
         assert rpdo_batches(trace) == []
-        doc["axes"]["5"]["position"] = 2
+        doc["axes"]["5"] = 24
         path.write_text(json.dumps(doc))
         yield "pp-move"
-        assert sims[5].pos == c.mechanical.target_to_raw(5, 2)
+        assert sims[5].pos == c.mechanical.target_to_raw(5, 24)
         yield "exit"
 
     script = commands()

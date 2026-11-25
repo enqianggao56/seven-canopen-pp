@@ -7,7 +7,9 @@ import pytest
 
 from canopen_pp import config, main as terminal
 from canopen_pp.drives import ControlError
+from canopen_pp.pdo import Sample
 from canopen_pp.pp import PPEncoder
+from canopen_pp.trajectory import plan
 from canopen_pp.pp_config import CONFIG_PATH, load_targets
 from test_virtual import system
 
@@ -20,9 +22,10 @@ def motion_system(system, monkeypatch, tmp_path):
     monkeypatch.setattr(config, "PP_ACK_TIMEOUT", .35)
     path = tmp_path / "targets.json"
     doc = json.loads(CONFIG_PATH.read_text())
+    doc["duration_s"] = .8
     for n, sim in sims.items():
-        sim.pos = sim.vel = 0
-        doc["axes"][str(n)]["position"] = .1 if n == 8 else .5
+        sim.travel_s = doc["duration_s"]
+        doc["axes"][str(n)] = .1 if n == 8 else 3.6
     path.write_text(json.dumps(doc))
     return controller, sims, trace, log, path
 
@@ -39,17 +42,21 @@ def rpdo_batches(trace):
     return batches
 
 
-def verify_move(batches, targets):
-    params = targets.encode(PPEncoder())
-    expected = [(0x201+i, struct.pack("<iI", p.target_position, p.profile_velocity))
-                for i, p in enumerate(params)]
-    expected += [(0x301+i, struct.pack("<II", p.profile_acceleration, p.profile_deceleration))
-                 for i, p in enumerate(params)]
+def planned(c, sims, targets):
+    return plan(targets, {n: Sample(pos=s.pos) for n, s in sims.items()}, PPEncoder(c.mechanical))
+
+
+def verify_move(batches, trajectory):
+    axes = trajectory.moving
+    expected = [(0x200+n, struct.pack("<iI", a.params.target_position, a.params.profile_velocity))
+                for n, a in axes.items()]
+    expected += [(0x300+n, struct.pack("<II", a.params.profile_acceleration, a.params.profile_deceleration))
+                 for n, a in axes.items()]
 
     def controls(word):
-        return [(0x400+a.command.node_id, struct.pack("<Hb", word, 1) +
-                 (struct.pack("<h", a.torque_per_mille) if a.torque_per_mille is not None else b""))
-                for a in targets.axes]
+        return [(0x400+n, struct.pack("<Hb", word, 1) +
+                 (struct.pack("<h", config.PP_TORQUE_PER_MILLE[n]) if n >= 5 else b""))
+                for n in axes]
 
     assert batches == [expected + controls(15), controls(31), controls(15)]
 
@@ -62,9 +69,12 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
 
     def commands():
         yield "init"
+        saved = path.read_text()
+        path.write_text("{")
         yield "enable"
+        path.write_text(saved)
         assert all([w for w, _, _ in s.frames] == [6, 7, 15] for s in sims.values())
-        first = load_targets(path)
+        first = planned(c, sims, load_targets(path))
         doc = json.loads(path.read_text())
         transmit = c.bus.transmit
 
@@ -87,39 +97,27 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
         yield "pp-move"
         path.write_text("{")
         yield "pp-move"
-        doc["axes"]["2"]["position"] = 1101  # beyond mechanical travel
+        doc["axes"]["2"] = 1101  # beyond mechanical travel
         path.write_text(json.dumps(doc))
         yield "pp-move"
-        doc["axes"]["2"]["position"] = .5
-        doc["axes"]["6"]["torque_per_mille"] = 1001
+        doc["duration_s"] = 0
+        doc["axes"]["2"] = 3.6
         path.write_text(json.dumps(doc))
         yield "pp-move"
-        doc["axes"]["6"]["torque_per_mille"] = 100
-        for field in ("velocity", "acceleration", "deceleration"):
-            old = doc["axes"]["7"][field]
-            doc["axes"]["7"][field] = 721  # beyond the axis design limit
-            path.write_text(json.dumps(doc))
-            yield "pp-move"
-            doc["axes"]["7"][field] = old
         assert rpdo_batches(trace) == []
         assert c.status().count("Operation Enabled") == 8
-        # Change the targets and profiles together while staying within the design limits.
-        positions = [100, 100, 50, -3, -5, 5, 5, 1]
-        for n, row in doc["axes"].items():
-            row.update(position=positions[int(n) - 1], velocity=8,
-                       acceleration=12, deceleration=13)
-            if "torque_per_mille" in row:
-                row["torque_per_mille"] = 50 + int(n)
+        doc["duration_s"] = .8
+        doc["axes"] = dict(zip(doc["axes"], [10, 20, 30, -3, -5, 5, 5, 1]))
         path.write_text(json.dumps(doc))
-        second = load_targets(path)
+        second = planned(c, sims, load_targets(path))
         yield "pp-move"
         verify_move(rpdo_batches(trace), second)
         assert first != second
         yield "status"
         assert c.status().count("Operation Enabled") == 8
         trace.clear()
-        yield "pp-move"  # already at target, still leaves a clean handshake
-        verify_move(rpdo_batches(trace), second)
+        yield "pp-move"  # all hold, no setpoint edge
+        assert rpdo_batches(trace) == []
         assert any("无需位移" in line for line in log)
         yield "disable"
         assert all(s.word == 0x40 for s in sims.values())
@@ -128,8 +126,8 @@ def test_terminal_two_moves_reload_hold_and_reject_invalid(motion_system, monkey
     script = commands()
     monkeypatch.setattr("builtins.input", lambda _: next(script))
     assert terminal.main() == 0
-    assert capsys.readouterr().err.count("pp-move 失败") == 7
-    assert sum("Eight Axis PP Motion Completed" in line for line in log) == 3
+    assert capsys.readouterr().err.count("pp-move 失败") == 4
+    assert sum("PP Motion Completed" in line for line in log) == 2
 
 
 @pytest.mark.parametrize("ack_bit", [0, 1 << 12])
@@ -148,13 +146,14 @@ def test_repeated_moves_without_reached_flag_on_nodes_5_to_8(motion_system, monk
     c.initialize()
     c.enable(load_targets(path))
     doc = json.loads(path.read_text())
-    for position in (.5, 1):
-        doc["axes"]["5"]["position"] = position
+    for position in (3.6, 7.2):
+        doc["axes"]["5"] = position
         path.write_text(json.dumps(doc))
         targets = load_targets(path)
+        expected = planned(c, sims, targets)
         trace.clear()
         c.pp_move(targets)
-        verify_move(rpdo_batches(trace), targets)
+        verify_move(rpdo_batches(trace), expected)
         samples = c.feedback.snapshot()
         assert all(samples[n].word & 0x1400 == ack_bit for n in range(5, 9))
 
@@ -168,7 +167,7 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
     c.enable(load_targets(path))
     c.pp_move(load_targets(path))
     doc = json.loads(path.read_text())
-    doc["axes"]["6"]["position"] = 1
+    doc["axes"] = {n: 2 * x for n, x in doc["axes"].items()}
     path.write_text(json.dumps(doc))
     trace.clear()
     sim = sims[4] if failure in ("partial_ack", "old_ack", "stuck_ack", "lost_hold", "no_reached") else sims[6]
@@ -203,6 +202,8 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
                 elif failure == "partial_tx":
                     raise ControlError("partial trigger")
             if failure == "no_reached" and cob == 0x400 + sim.n and data[0] == 15 and sim.word & 0x1000:
+                sim.trigger_stamp = None
+                sim.pos, sim.vel = sim.target_position, 0
                 sim.word &= ~0x0400  # correct position alone must not complete this move
             return original(cob, data, **kwargs)
 
@@ -215,9 +216,9 @@ def test_second_motion_failure_latches_without_retrigger(motion_system, failure,
     elif failure == "stuck_ack":
         assert "设定点 ACK=0 超时" in str(error.value)
     elif failure == "no_reached":
-        assert "八轴到位 超时" in str(error.value)
+        assert "在线节点到位 超时" in str(error.value)
     assert c.pp_inhibited
-    assert sum("Eight Axis PP Motion Completed" in line for line in log) == 1
+    assert sum("PP Motion Completed" in line for line in log) == 1
     triggers = [data for cob, data in trace if cob == 0x401 and data[0] == 31]
     assert len(triggers) == (0 if failure in ("old_ack", "lost_hold", "lost_position") else 1)
     if failure == "partial_tx":
@@ -256,29 +257,201 @@ def test_missing_load_cycle_prevents_trigger(motion_system, monkeypatch):
     assert not any(cob == 0x401 and data[0] == 31 for cob, data in trace)
 
 
-def test_motion_with_nonzero_velocity_feedback_can_outlast_enable_timeout(motion_system, monkeypatch):
-    c, sims, _, log, path = motion_system
-    axis = sims[5]
-    axis.vel = -12  # Report -7.2 deg/s before the trigger and throughout arrival.
+def test_start_velocity_above_window_rejects_before_load(motion_system, monkeypatch):
+    c, sims, trace, _, path = motion_system
+    monkeypatch.setitem(config.PP_VELOCITY_TOLERANCES, 5, 6.0)
+    sims[5].vel = -12  # 7.2 deg/s in magnitude
     c.initialize()
-    c.enable(load_targets(path))
-    original = c.bus.transmit
-    cycles = 0
+    c.enable()
+    trace.clear()
+    with pytest.raises(ControlError, match="Node 5.*未静止"):
+        c.pp_move(load_targets(path))
+    assert rpdo_batches(trace) == []
 
-    def delay_arrival(cob, data, **kwargs):
-        nonlocal cycles
-        if cob == 0x405 and data[0] == 31:
-            axis.follow_target = False
-            cycles = 1
-        if cob == 0x80 and cycles:
-            cycles += 1
-            if cycles == 20:
-                axis.pos = axis.target_position
-                axis.word |= 0x0400
+
+def test_arrival_requires_velocity_in_window_and_reports_measured_time(motion_system, monkeypatch):
+    c, sims, trace, log, path = motion_system
+    # Other axes settle on schedule. Axis 5 reports its final position early,
+    # while its velocity remains nonzero until the delayed stop.
+    monkeypatch.setitem(config.PP_VELOCITY_TOLERANCES, 5, .3)  # simulated running speed is 0.6 deg/s
+    sims[5].travel_s = 1.2
+    c.initialize()
+    c.enable()
+    original = c.bus.transmit
+
+    def enter_window(cob, data, **kwargs):
+        if cob == 0x405 and data[0] == 15 and sims[5].trigger_stamp is not None:
+            sims[5].pos = sims[5].target_position
         return original(cob, data, **kwargs)
 
-    monkeypatch.setattr(c.bus, "transmit", delay_arrival)
+    monkeypatch.setattr(c.bus, "transmit", enter_window)
+    with pytest.raises(ControlError, match="实测到位时间超出"):
+        c.pp_move(load_targets(path))
+    report = next(line for line in log if "Node 5 起动" in line)
+    arrival = float(report.split("到位 ")[1].split()[0])
+    assert arrival == pytest.approx(1.2, abs=.12)
+    assert c.pp_inhibited
+
+
+def test_start_drift_after_loading_prevents_trigger(motion_system, monkeypatch):
+    c, sims, trace, _, path = motion_system
+    c.initialize()
+    c.enable()
+    original = c.bus.transmit
+
+    def drift(cob, data, **kwargs):
+        if cob == 0x301:
+            sims[1].pos += 110  # 0.02014 mm, just outside the 0.02 mm window
+        return original(cob, data, **kwargs)
+
+    monkeypatch.setattr(c.bus, "transmit", drift)
+    trace.clear()
+    with pytest.raises(ControlError, match="起始位置变化"):
+        c.pp_move(load_targets(path))
+    assert not any(cob == 0x401 and data[0] == 31 for cob, data in trace)
+
+
+@pytest.mark.parametrize("system", [range(1, 9), (1, 2, 3, 4, 7, 8)], indirect=True)
+def test_four_second_profile_on_wire(system, monkeypatch):
+    from test_trajectory import START, END
+    from canopen_pp.pp_config import PPTargets, AxisTarget
+
+    c, sims, trace, log = system
+    c.parameter_test_only = False
+    monkeypatch.setattr(config, "INITIAL_SDO_TIMEOUT", .15)
+    for n, sim in sims.items():
+        sim.pos = c.mechanical.target_to_raw(n, START[n - 1])
+    c.initialize()
+    c.enable()
+    targets = PPTargets(4, tuple(AxisTarget(n, pos) for n, pos in enumerate(END, 1)))
+    expected = planned(c, sims, targets)
+    trace.clear()
+    c.pp_move(targets)
+    verify_move(rpdo_batches(trace), expected)
+    assert expected.moving.keys() == sims.keys() - {7}
+    assert [cw for cw, _, _ in sims[7].frames] == [6, 7, 15]
+    assert all(s.word & 0x37 == 0x37 for s in sims.values())
+    assert sum("起动" in line for line in log) == len(expected.moving)
+
+
+@pytest.mark.parametrize(("n", "pos", "duration", "reason"),
+                         [(8, 14, 1, "最短时间 2 s"), (5, .1, 10, "分辨率")])
+def test_unplannable_sends_no_motion_frames(motion_system, n, pos, duration, reason):
+    c, sims, trace, _, path = motion_system
+    path.write_text(json.dumps({"duration_s": duration, "axes":
+                                {str(i): pos if i == n else 0 for i in sims}}))
+    c.initialize()
+    c.enable()
+    trace.clear()
+    with pytest.raises(ControlError, match=reason):
+        c.pp_move(load_targets(path))
+    assert c.pp_enabled and not c.pp_inhibited and not rpdo_batches(trace)
+
+
+def test_early_arrival_is_timed_from_trigger_during_ack(motion_system):
+    c, sims, _, log, path = motion_system
+    for sim in sims.values():
+        sim.travel_s = 0
+    c.initialize()
+    c.enable()
+    with pytest.raises(ControlError, match="实测到位时间超出"):
+        c.pp_move(load_targets(path))
+    reports = [line for line in log if "起动" in line]
+    assert len(reports) == len(sims)
+    for line in reports:
+        assert 0 <= float(line.split("到位 ")[1].split()[0]) < c.clock.period
+    assert c.pp_inhibited
+
+
+def test_inter_axis_spread_is_checked_independently(motion_system, monkeypatch):
+    c, sims, _, log, path = motion_system
+    monkeypatch.setattr(config, "PP_ARRIVAL_TOLERANCE_S", .28)
+    sims[5].travel_s, sims[6].travel_s = .6, 1.0
+    c.initialize()
+    c.enable()
+    with pytest.raises(ControlError, match="实测到位时间超出"):
+        c.pp_move(load_targets(path))
+    arrivals = [float(line.split("到位 ")[1].split()[0]) for line in log if "起动" in line]
+    assert all(abs(t - .8) <= .28 for t in arrivals)
+    assert max(arrivals) - min(arrivals) > .28
+
+
+def test_stale_feedback_on_holding_axis_prevents_group_load(motion_system):
+    c, sims, trace, _, path = motion_system
+    doc = json.loads(path.read_text())
+    doc["axes"]["7"] = 0
+    path.write_text(json.dumps(doc))
+    c.initialize()
+    c.enable()
+    sims[7].send_velocity = False
+    sleep(config.FEEDBACK_TIMEOUT + c.clock.period)
+    trace.clear()
+    with pytest.raises(ControlError, match="Node 7.*反馈失效"):
+        c.pp_move(load_targets(path))
+    assert c.pp_inhibited
+    assert rpdo_batches(trace) == [[(0x400+n, s.drive.control_data(s.drive.disable_word))
+                                    for n, s in sims.items()]]
+
+
+def test_skipped_poll_replays_wire_arrival(motion_system, monkeypatch):
+    from canopen_pp.motion import PPMotion
+
+    c, sims, _, log, path = motion_system
+    c.initialize()
+    c.enable()
+    observe = PPMotion.observe
+    delayed = False
+
+    def skip_poll(self, samples):
+        nonlocal delayed
+        observe(self, samples)
+        # Pause only the command thread, just before the programmed arrival.
+        if self.clear_stamp and not delayed:
+            elapsed = samples[1].tp1 - self.trigger_stamp
+            if .5 <= elapsed <= .7:
+                delayed = True
+                sleep(.36)
+
+    monkeypatch.setattr(PPMotion, "observe", skip_poll)
     c.pp_move(load_targets(path))
-    assert cycles >= 20 and 18 * c.clock.period > config.TRANSITION_TIMEOUT
-    assert c.feedback.snapshot()[5].vel == -12
-    assert any("Eight Axis PP Motion Completed" in line for line in log)
+    assert delayed
+    arrivals = [float(line.split("到位 ")[1].split()[0]) for line in log if "起动" in line]
+    assert len(arrivals) == 8
+    assert arrivals == pytest.approx([.8]*8, abs=.08)
+
+
+def test_encoder_noise_during_load_start_and_arrival(motion_system, monkeypatch):
+    c, sims, _, log, path = motion_system
+    axis = sims[5]
+    origin = axis.pos
+    monkeypatch.setitem(config.PP_VELOCITY_TOLERANCES, 5, .6)
+    transmit = c.bus.transmit
+    send = axis.node.network.send_message
+
+    def load_with_jitter(cob, data, **kwargs):
+        if cob == 0x305:
+            axis.pos += 1  # one count is about 0.022 deg, inside 0.05 deg
+        return transmit(cob, data, **kwargs)
+
+    jitter_cycles = 2
+
+    def noisy_feedback(cob, data, *args, **kwargs):
+        nonlocal jitter_cycles
+        if cob == 0x285:
+            data = struct.pack("<i", -1)  # exactly on the velocity threshold
+        elif cob == 0x185 and axis.trigger_stamp is not None and jitter_cycles:
+            # For the first two cycles there is still only encoder noise.
+            jitter_cycles -= 1
+            word, _, mode = struct.unpack("<Hib", data)
+            data = struct.pack("<Hib", word, origin + 3, mode)
+        return send(cob, data, *args, **kwargs)
+
+    monkeypatch.setattr(c.bus, "transmit", load_with_jitter)
+    monkeypatch.setattr(axis.node.network, "send_message", noisy_feedback)
+    c.initialize()
+    c.enable()
+    c.pp_move(load_targets(path))
+    report = next(line for line in log if "Node 5 起动" in line)
+    start = float(report.split("起动 ")[1].split()[0])
+    assert start == pytest.approx(.2, abs=.06)
+    assert c.pp_enabled

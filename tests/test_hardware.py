@@ -7,11 +7,10 @@ import pytest
 
 from canopen_pp import config
 from canopen_pp.main import connect
-from canopen_pp.pp_config import load_targets
 
 
-def verify_capture(trace, nodes, targets):
-    torques = {a.command.node_id: a.torque_per_mille for a in targets.axes}
+def verify_capture(trace, nodes):
+    torques = config.PP_TORQUE_PER_MILLE
     start = next(i for i, m in enumerate(trace) if m.arbitration_id == 0 and m.data[0] == 1)
     assert not any(m.arbitration_id == 0x80 for m in trace[:start])
     cycle, batches = [], []
@@ -52,9 +51,8 @@ def test_hardware(nodes, selection):
             c = connect({n: config.AXIS_CONFIG[n] for n in nodes}, config.CAN_CONFIG)
             try:
                 online = list(c.online_nodes)
-                targets = load_targets(nodes=online)
                 print("初始 TPDO\n" + c.status(), flush=True)
-                c.enable(targets)
+                c.enable()
                 print("使能 TPDO\n" + c.status(), flush=True)
                 c.disable()
                 print("失能 TPDO\n" + c.status(), flush=True)
@@ -62,4 +60,4 @@ def test_hardware(nodes, selection):
                 c.close()
         finally:
             listener.stop()
-    verify_capture(trace, online, targets)
+    verify_capture(trace, online)

@@ -29,7 +29,7 @@ def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, caps
 
     path = tmp_path / "targets.json"
     repaired = json.loads(CONFIG_PATH.read_text())
-    repaired["axes"]["1"]["position"] = 100
+    repaired["axes"]["1"] = 100
     path.write_text("{}")
     controller = Mock(online_nodes=range(1, 9))
     connect = Mock(return_value=controller)
@@ -53,4 +53,4 @@ def test_move_test_loads_valid_snapshot_after_repair(monkeypatch, tmp_path, caps
     controller.close.assert_called_once()
     controller.move_test.assert_called_once()
     targets, = controller.move_test.call_args.args
-    assert len(targets.axes) == 8 and targets.axes[0].command.target_position == 100
+    assert len(targets.axes) == 8 and targets.axes[0].position == 100

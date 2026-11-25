@@ -11,7 +11,6 @@ from canopen_pp.communication import Adapter, VENDOR
 from canopen_pp.controller import Controller
 from canopen_pp.drives import ControlError, make_drives
 from canopen_pp.pdo import slots
-from canopen_pp.pp_config import load_targets
 
 
 class SimDrive:
@@ -22,7 +21,9 @@ class SimDrive:
         self.word, self.mode = 0x0040, 0
         self.pending = None
         self.pending_position = self.target_position = None
-        self.pos, self.vel = -3200, -10
+        self.pos, self.vel = config.MECHANICAL_CONFIG[self.n].zero_offset, 0
+        self.travel_s = 4.0
+        self.trigger_stamp = None
         self.follow_target = True
         self.ignore = set()
         self.mode_ok = self.send_velocity = True
@@ -75,10 +76,16 @@ class SimDrive:
                 elif cw == 31 and self.target_position is not None:
                     self.word |= 0x1000
                     if self.follow_target:
-                        self.pos = self.target_position
-                        self.word |= 0x0400
+                        self.trigger_stamp = stamp
+                        self.vel = 1
+                        self.pos = (self.pos + self.target_position) // 2
+                        self.word &= ~0x0400
                 elif cw == 15:
                     self.word &= ~0x1000
+        if self.trigger_stamp is not None and stamp - self.trigger_stamp >= self.travel_s - .01:
+            self.pos, self.vel = self.target_position, 0
+            self.word |= 0x0400
+            self.trigger_stamp = None
         if self.mapped(self.slots[3]):
             self.node.network.send_message(0x180+self.n, struct.pack("<Hib", self.word, self.pos, self.mode))
         if self.send_velocity and self.mapped(self.slots[4]):
@@ -128,8 +135,7 @@ def test_full_wire_sequence(system):
     c.initialize()
     assert not any(s.frames for s in sims.values())
     c.enable()
-    torques = {a.command.node_id: struct.pack("<h", a.torque_per_mille)
-               for a in load_targets().axes if a.torque_per_mille is not None}
+    torques = {n: struct.pack("<h", t) for n, t in config.PP_TORQUE_PER_MILLE.items()}
     for n in range(5, 9):
         assert sims[n].node.get_data(0x6071, 0) == torques[n]
     c.disable()
